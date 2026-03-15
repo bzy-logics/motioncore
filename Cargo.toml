@@ -1,0 +1,98 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/protocol",
+    "crates/engine-api",
+    "crates/safety",
+    "crates/motion",
+    "crates/kinematics",
+    "crates/device-graph",
+    "crates/plugin-sdk",
+    "crates/plugin-runtime",
+    "crates/mcu-manager",
+    "crates/simulator",
+    "crates/firmware-hal",
+    "crates/firmware-stepper",
+    "crates/firmware-core",
+    "crates/firmware-builder",
+    "crates/core",
+    "crates/cli",
+    "plugins/builtin",
+    "boards/stm32f4",
+]
+# Host-buildable crates. Board crates are cross-compiled explicitly, e.g.
+#   cargo build -p motioncore-board-stm32f4 --profile firmware --target thumbv7em-none-eabihf
+# (or `motioncore firmware build`).
+default-members = [
+    "crates/protocol",
+    "crates/engine-api",
+    "crates/safety",
+    "crates/motion",
+    "crates/kinematics",
+    "crates/device-graph",
+    "crates/plugin-sdk",
+    "crates/plugin-runtime",
+    "crates/mcu-manager",
+    "crates/simulator",
+    "crates/firmware-hal",
+    "crates/firmware-stepper",
+    "crates/firmware-core",
+    "crates/firmware-builder",
+    "crates/core",
+    "crates/cli",
+    "plugins/builtin",
+]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.85"
+repository = "https://github.com/bzyfuzy/motioncore"
+
+[workspace.dependencies]
+motioncore-protocol = { path = "crates/protocol" }
+motioncore-engine-api = { path = "crates/engine-api" }
+motioncore-safety = { path = "crates/safety" }
+motioncore-motion = { path = "crates/motion" }
+motioncore-kinematics = { path = "crates/kinematics" }
+motioncore-device-graph = { path = "crates/device-graph" }
+motioncore-plugin-sdk = { path = "crates/plugin-sdk" }
+motioncore-plugin-runtime = { path = "crates/plugin-runtime" }
+motioncore-mcu-manager = { path = "crates/mcu-manager" }
+motioncore-simulator = { path = "crates/simulator" }
+motioncore-firmware-hal = { path = "crates/firmware-hal" }
+motioncore-firmware-stepper = { path = "crates/firmware-stepper" }
+motioncore-firmware-core = { path = "crates/firmware-core" }
+motioncore-firmware-builder = { path = "crates/firmware-builder" }
+motioncore-core = { path = "crates/core" }
+motioncore-builtin-plugins = { path = "plugins/builtin" }
+
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = "1"
+postcard = { version = "1", default-features = false }
+heapless = { version = "0.8", features = ["serde"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "process"] }
+tokio-stream = { version = "0.1", features = ["net", "sync"] }
+tokio-serial = { version = "5", default-features = false }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+semver = "1"
+sha2 = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+tonic = "0.12"
+prost = "0.13"
+tonic-build = "0.12"
+protox = "0.7"
+
+# Embedded profile for board crates (opt for size, LTO, abort on panic).
+[profile.firmware]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = true
+panic = "abort"

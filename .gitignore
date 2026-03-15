@@ -1,0 +1,12 @@
+# Rust
+target/
+# Go
+/build/
+*.exe
+# Node
+node_modules/
+dist/
+# Logs / local
+*.log
+.env
+.DS_Store
