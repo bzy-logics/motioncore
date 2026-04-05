@@ -1,0 +1,10 @@
+[package]
+name = "motioncore-motion"
+description = "Joint-space trajectory planning, validation and MCU segment generation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+motioncore-protocol = { workspace = true }
+thiserror = { workspace = true }

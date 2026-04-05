@@ -1,0 +1,9 @@
+[package]
+name = "motioncore-kinematics"
+description = "Forward/inverse kinematics abstractions and joint-space identity solver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
