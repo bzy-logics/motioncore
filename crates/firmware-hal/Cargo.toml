@@ -1,0 +1,8 @@
+[package]
+name = "motioncore-firmware-hal"
+description = "Hardware interfaces implemented by MotionCore boards and the simulator (no_std)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

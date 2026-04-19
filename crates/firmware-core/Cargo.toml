@@ -1,0 +1,12 @@
+[package]
+name = "motioncore-firmware-core"
+description = "Target-independent MotionCore MCU runtime: dispatch, watchdog, faults (no_std)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+motioncore-firmware-hal = { workspace = true }
+motioncore-firmware-stepper = { workspace = true }
+motioncore-protocol = { workspace = true }
+heapless = { workspace = true }
