@@ -1,0 +1,12 @@
+[package]
+name = "motioncore-simulator"
+description = "Virtual MCU: the shared firmware runtime against a simulated world"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+motioncore-protocol = { workspace = true }
+motioncore-firmware-core = { workspace = true }
+motioncore-device-graph = { workspace = true }
+tokio = { workspace = true }
