@@ -1,0 +1,389 @@
+//! Robot configuration, board metadata and device-graph resolution.
+//!
+//! A robot is described as typed components (axes → driver → MCU channel,
+//! endstops, homing) rather than a hard-coded six-motor structure. [`resolve`]
+//! validates the whole graph and reports **every** problem it finds — duplicate
+//! pins, channels the board does not have, missing firmware capabilities,
+//! inconsistent limits — instead of stopping at the first.
+//!
+//! Automated checks cannot replace electrical verification or a physical
+//! safety assessment.
+
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
+
+pub mod boards;
+
+pub use boards::{Board, BOARDS};
+
+// ---------------------------------------------------------------------------
+// Configuration file schema (TOML)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RobotFile {
+    /// Schema version of this file.
+    pub schema: u32,
+    pub robot: RobotSection,
+    pub mcu: BTreeMap<String, McuSection>,
+    #[serde(rename = "axis")]
+    pub axes: Vec<AxisSection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RobotSection {
+    pub name: String,
+    /// Robot-profile plugin that provides this robot definition.
+    pub profile: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McuSection {
+    /// Board id from [`BOARDS`].
+    pub board: String,
+    /// `virtual`, `tcp://host:port`, or `serial:///dev/ttyACM0`.
+    pub transport: String,
+    #[serde(default = "default_watchdog")]
+    pub watchdog_ms: u32,
+}
+
+fn default_watchdog() -> u32 {
+    500
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JointKind {
+    Revolute,
+    Prismatic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Unit {
+    Deg,
+    Mm,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AxisSection {
+    pub id: String,
+    pub name: String,
+    pub kind: JointKind,
+    pub unit: Unit,
+    pub mcu: String,
+    pub channel: u8,
+    /// Motor steps (incl. microstepping and gearing) per axis unit.
+    pub steps_per_unit: f64,
+    pub min: f64,
+    pub max: f64,
+    pub max_velocity: f64,
+    pub max_acceleration: f64,
+    /// Deceleration for controlled stops; defaults to 2 × `max_acceleration`.
+    pub stop_deceleration: Option<f64>,
+    #[serde(default)]
+    pub invert_dir: bool,
+    pub driver: DriverSection,
+    pub endstop: Option<EndstopSection>,
+    pub homing: Option<HomingSection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DriverSection {
+    /// Actuator plugin that drives this axis, e.g. `org.motioncore.actuator.step_dir`.
+    pub actuator: String,
+    pub step_pin: String,
+    pub dir_pin: String,
+    pub enable_pin: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EndstopSection {
+    pub pin: String,
+    #[serde(default)]
+    pub invert: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Direction {
+    Positive,
+    Negative,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HomingSection {
+    pub direction: Direction,
+    /// Search speed in axis units/s.
+    pub speed: f64,
+    /// Axis position assigned at the switch.
+    pub position: f64,
+    /// Maximum search travel in axis units before homing fails.
+    pub max_travel: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Resolution
+// ---------------------------------------------------------------------------
+
+/// A validated robot ready for the engine.
+#[derive(Debug, Clone)]
+pub struct ResolvedRobot {
+    pub file: RobotFile,
+    pub mcus: BTreeMap<String, ResolvedMcu>,
+    /// Plugin capabilities required by this configuration.
+    pub required_capabilities: Vec<String>,
+    /// Plugin ids referenced (profile + actuators).
+    pub required_plugins: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedMcu {
+    pub name: String,
+    pub board: &'static Board,
+    pub transport: Transport,
+    pub watchdog_ms: u32,
+    /// MCU capability names the firmware must report.
+    pub required_firmware_capabilities: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Transport {
+    Virtual,
+    Tcp(String),
+    Serial(String),
+}
+
+impl Transport {
+    pub fn parse(s: &str) -> Option<Self> {
+        if s == "virtual" {
+            Some(Self::Virtual)
+        } else if let Some(addr) = s.strip_prefix("tcp://") {
+            (!addr.is_empty()).then(|| Self::Tcp(addr.to_string()))
+        } else if let Some(dev) = s.strip_prefix("serial://") {
+            (!dev.is_empty()).then(|| Self::Serial(dev.to_string()))
+        } else {
+            None
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Virtual => "virtual",
+            Self::Tcp(_) => "tcp",
+            Self::Serial(_) => "serial",
+        }
+    }
+}
+
+/// One validation problem, with a dotted path to the offending field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issue {
+    pub path: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for Issue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.path, self.message)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("cannot read {path}: {source}")]
+    Io { path: String, source: std::io::Error },
+    #[error("invalid TOML: {0}")]
+    Parse(#[from] toml::de::Error),
+    #[error("configuration invalid:\n  {}", .0.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n  "))]
+    Invalid(Vec<Issue>),
+}
+
+pub const SCHEMA_VERSION: u32 = 1;
+
+pub fn load(path: &Path) -> Result<ResolvedRobot, ConfigError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| ConfigError::Io { path: path.display().to_string(), source: e })?;
+    parse(&text)
+}
+
+pub fn parse(text: &str) -> Result<ResolvedRobot, ConfigError> {
+    let file: RobotFile = toml::from_str(text)?;
+    resolve(file).map_err(ConfigError::Invalid)
+}
+
+/// Validate a robot description against board metadata.
+pub fn resolve(file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
+    let mut issues = Vec::new();
+
+
+    if file.schema != SCHEMA_VERSION {
+        add(&mut issues, "schema".into(), format!("unsupported schema {} (expected {SCHEMA_VERSION})", file.schema));
+    }
+    if file.axes.is_empty() {
+        add(&mut issues, "axis".into(), "at least one axis is required".into());
+    }
+
+    let mut mcus = BTreeMap::new();
+    for (name, m) in &file.mcu {
+        let path = format!("mcu.{name}");
+        let board = boards::find(&m.board);
+        if board.is_none() {
+            let known: Vec<_> = BOARDS.iter().map(|b| b.id).collect();
+            add(&mut issues, format!("{path}.board"), format!("unknown board '{}' (known: {})", m.board, known.join(", ")));
+        }
+        let transport = Transport::parse(&m.transport);
+        if transport.is_none() {
+            add(&mut issues, format!("{path}.transport"), format!("invalid transport '{}'", m.transport));
+        }
+        if !(10..=10_000).contains(&m.watchdog_ms) {
+            add(&mut issues, format!("{path}.watchdog_ms"), "must be within 10..=10000".into());
+        }
+        if let (Some(board), Some(transport)) = (board, transport) {
+            if transport == Transport::Virtual && !board.is_virtual {
+                add(&mut issues, format!("{path}.transport"), format!("board '{}' is physical; virtual transport requires the 'virtual' board", board.id));
+            }
+            mcus.insert(name.clone(), ResolvedMcu {
+                name: name.clone(),
+                board,
+                transport,
+                watchdog_ms: m.watchdog_ms,
+                required_firmware_capabilities: vec!["watchdog"],
+            });
+        }
+    }
+
+    let mut ids = HashSet::new();
+    let mut channels: HashMap<(String, u8), String> = HashMap::new();
+    let mut pins: HashMap<(String, String), String> = HashMap::new();
+    let mut required_plugins = vec![file.robot.profile.clone()];
+    let mut required_capabilities = vec!["robot.profile".to_string()];
+
+    for (i, a) in file.axes.iter().enumerate() {
+        let p = format!("axis[{i}]({})", a.id);
+        if a.id.is_empty() || !a.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            add(&mut issues, format!("{p}.id"), "must be non-empty [A-Za-z0-9_]".into());
+        }
+        if !ids.insert(a.id.clone()) {
+            add(&mut issues, format!("{p}.id"), "duplicate axis id".into());
+        }
+        match (a.kind, a.unit) {
+            (JointKind::Revolute, Unit::Deg) | (JointKind::Prismatic, Unit::Mm) => {}
+            (k, u) => add(&mut issues, format!("{p}.unit"), format!("{u:?} is not a valid unit for a {k:?} joint")),
+        }
+        for (field, v) in [
+            ("steps_per_unit", a.steps_per_unit),
+            ("max_velocity", a.max_velocity),
+            ("max_acceleration", a.max_acceleration),
+            ("stop_deceleration", a.stop_deceleration.unwrap_or(1.0)),
+        ] {
+            if !(v.is_finite() && v > 0.0) {
+                add(&mut issues, format!("{p}.{field}"), "must be a positive finite number".into());
+            }
+        }
+        if !(a.min.is_finite() && a.max.is_finite() && a.min < a.max) {
+            add(&mut issues, format!("{p}.min"), "min must be finite and less than max".into());
+        }
+        let range_steps = (a.max - a.min).abs() * a.steps_per_unit;
+        if range_steps.is_finite() && range_steps > i32::MAX as f64 / 2.0 {
+            add(&mut issues, format!("{p}.steps_per_unit"), "travel range exceeds MCU step counter".into());
+        }
+
+        required_plugins.push(a.driver.actuator.clone());
+        required_capabilities.push("actuator.step_dir".into());
+
+        let Some(m) = mcus.get_mut(&a.mcu) else {
+            if !file.mcu.contains_key(&a.mcu) {
+                add(&mut issues, format!("{p}.mcu"), format!("unknown mcu '{}'", a.mcu));
+            }
+            continue;
+        };
+        let board = m.board;
+        if a.channel as usize >= board.step_channels as usize {
+            add(&mut issues, format!("{p}.channel"), format!("board '{}' has {} step channel(s)", board.id, board.step_channels));
+        }
+        if let Some(other) = channels.insert((a.mcu.clone(), a.channel), a.id.clone()) {
+            add(&mut issues, format!("{p}.channel"), format!("channel {} already used by axis '{other}'", a.channel));
+        }
+        let rate = a.max_velocity * a.steps_per_unit;
+        if rate > board.max_step_rate as f64 {
+            add(&mut issues, format!("{p}.max_velocity"), format!("needs {rate:.0} steps/s; board limit is {}", board.max_step_rate));
+        }
+        if !m.required_firmware_capabilities.contains(&"stepper.step_dir") {
+            m.required_firmware_capabilities.push("stepper.step_dir");
+        }
+
+        let mut claim = |pin: &str, role: &str, issues: &mut Vec<Issue>| {
+            let path = format!("{p}.{role}");
+            if !board.has_pin(pin) {
+                issues.push(Issue { path: path.clone(), message: format!("pin '{pin}' not available on board '{}'", board.id) });
+            }
+            if let Some(owner) = pins.insert((a.mcu.clone(), pin.to_string()), format!("{}.{role}", a.id)) {
+                issues.push(Issue { path, message: format!("pin '{pin}' already assigned to {owner}") });
+            }
+        };
+        claim(&a.driver.step_pin, "driver.step_pin", &mut issues);
+        claim(&a.driver.dir_pin, "driver.dir_pin", &mut issues);
+        claim(&a.driver.enable_pin, "driver.enable_pin", &mut issues);
+        if let Some(e) = &a.endstop {
+            claim(&e.pin, "endstop.pin", &mut issues);
+            if !m.required_firmware_capabilities.contains(&"endstop") {
+                m.required_firmware_capabilities.push("endstop");
+            }
+        }
+
+        if let Some(h) = &a.homing {
+            let hp = format!("{p}.homing");
+            if a.endstop.is_none() {
+                issues.push(Issue { path: hp.clone(), message: "homing requires an endstop".into() });
+            }
+            if !(h.speed.is_finite() && h.speed > 0.0 && h.speed <= a.max_velocity) {
+                issues.push(Issue { path: format!("{hp}.speed"), message: "must be positive and ≤ max_velocity".into() });
+            }
+            if !(h.position >= a.min && h.position <= a.max) {
+                issues.push(Issue { path: format!("{hp}.position"), message: "must lie within [min, max]".into() });
+            }
+            if !(h.max_travel.is_finite() && h.max_travel > 0.0) {
+                issues.push(Issue { path: format!("{hp}.max_travel"), message: "must be positive".into() });
+            }
+        }
+    }
+
+    required_plugins.sort();
+    required_plugins.dedup();
+    required_capabilities.sort();
+    required_capabilities.dedup();
+
+    if issues.is_empty() {
+        Ok(ResolvedRobot { file, mcus, required_capabilities, required_plugins })
+    } else {
+        Err(issues)
+    }
+}
+
+impl ResolvedRobot {
+    pub fn axis(&self, id: &str) -> Option<&AxisSection> {
+        self.file.axes.iter().find(|a| a.id == id)
+    }
+}
+
+impl AxisSection {
+    pub fn stop_deceleration(&self) -> f64 {
+        self.stop_deceleration.unwrap_or(2.0 * self.max_acceleration)
+    }
+}
+
+#[cfg(test)]
+mod tests;
+
+fn add(issues: &mut Vec<Issue>, path: String, message: String) {
+    issues.push(Issue { path, message });
+}
