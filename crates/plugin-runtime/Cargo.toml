@@ -1,0 +1,12 @@
+[package]
+name = "motioncore-plugin-runtime"
+description = "Plugin discovery, validation, dependency resolution, lifecycle and capability registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+motioncore-plugin-sdk = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+toml = { workspace = true }
+sha2 = { workspace = true }

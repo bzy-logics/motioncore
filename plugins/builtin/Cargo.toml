@@ -1,0 +1,13 @@
+[package]
+name = "motioncore-builtin-plugins"
+description = "Reference host plugins compiled into the MotionCore engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+motioncore-plugin-sdk = { workspace = true }
+motioncore-kinematics = { workspace = true }
+
+[dev-dependencies]
+motioncore-plugin-runtime = { workspace = true }

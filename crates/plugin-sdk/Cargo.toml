@@ -1,0 +1,13 @@
+[package]
+name = "motioncore-plugin-sdk"
+description = "Versioned MotionCore host-plugin contract (manifest, permissions, Plugin trait)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["std"] }
+semver = { workspace = true }
+
+[dev-dependencies]
+toml = { workspace = true }
