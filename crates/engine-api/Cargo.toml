@@ -1,0 +1,15 @@
+[package]
+name = "motioncore-engine-api"
+description = "Versioned gRPC contract between the MotionCore engine and its clients"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+include = ["src/**", "proto/**", "build.rs"]
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protox = { workspace = true }

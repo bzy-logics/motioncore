@@ -1,0 +1,400 @@
+// MotionCore engine control API, version 1.
+//
+// Published and versioned by the `motioncore` repository (crate
+// `motioncore-engine-api`). Clients generate bindings from a *tagged release*
+// of this file (git tag `engine-api/vX.Y.Z`); never copy and edit it.
+//
+// Compatibility rules for v1:
+//   * Only additive changes (new fields, messages, RPCs, enum values).
+//   * Field numbers are never reused; removed fields are `reserved`.
+//   * Breaking changes require package `motioncore.engine.v2`.
+//
+// Errors are returned as gRPC status codes. The precise MotionCore error code
+// is sent in the trailing metadata key `motioncore-error-code`:
+//
+//   bad_request        INVALID_ARGUMENT
+//   validation_failed  INVALID_ARGUMENT
+//   unknown_axis       NOT_FOUND
+//   not_found          NOT_FOUND
+//   not_homed          FAILED_PRECONDITION
+//   invalid_state      FAILED_PRECONDITION
+//   mcu_error          UNAVAILABLE
+//   internal           INTERNAL
+//
+// Units: positions, deltas and velocities are in the axis display unit
+// (`deg` for revolute joints, `mm` for prismatic joints).
+syntax = "proto3";
+
+package motioncore.engine.v1;
+
+option go_package = "github.com/motioncore/motioncore-server/gen/motioncore/engine/v1;enginev1";
+
+service EngineService {
+  // Handshake: API and engine versions. Clients must check `api_version`.
+  rpc GetInfo(GetInfoRequest) returns (EngineInfo);
+
+  rpc GetStatus(GetStatusRequest) returns (Telemetry);
+  rpc GetRobotConfig(GetRobotConfigRequest) returns (RobotConfig);
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+
+  // Live telemetry (~20 Hz) and log events. The first event is always a
+  // telemetry snapshot.
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+
+  rpc Enable(EnableRequest) returns (CommandResponse);
+  rpc Disable(DisableRequest) returns (CommandResponse);
+  rpc Jog(JogRequest) returns (CommandResponse);
+  rpc MoveTo(MoveToRequest) returns (CommandResponse);
+  rpc Home(HomeRequest) returns (CommandResponse);
+  rpc Stop(StopRequest) returns (CommandResponse);
+  rpc EmergencyStop(EmergencyStopRequest) returns (CommandResponse);
+  rpc ResetFault(ResetFaultRequest) returns (CommandResponse);
+
+  // Fault injection. Only when the engine runs with
+  // `--enable-fault-injection`; otherwise FAILED_PRECONDITION.
+  rpc DebugDisconnectMcu(DebugDisconnectMcuRequest) returns (CommandResponse);
+  rpc DebugFailPlugin(DebugFailPluginRequest) returns (CommandResponse);
+}
+
+// Firmware build and flash, delegated to the restricted Rust builder. Builds
+// always use the robot configuration loaded by the engine; clients cannot
+// supply paths, scripts or toolchains.
+service FirmwareService {
+  rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
+  rpc StartBuild(StartBuildRequest) returns (FirmwareJob);
+  // Flashing requires `confirm = true` and drives that are not energised.
+  rpc StartFlash(StartFlashRequest) returns (FirmwareJob);
+  rpc GetJob(GetJobRequest) returns (FirmwareJob);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Info
+// ---------------------------------------------------------------------------
+
+message GetInfoRequest {}
+
+message EngineInfo {
+  // Semantic version of this API contract, e.g. "1.0.0".
+  string api_version = 1;
+  string engine_version = 2;
+  // MCU wire protocol version spoken by this engine.
+  uint32 mcu_protocol_version = 3;
+  // Host plugin API version implemented by this engine.
+  string plugin_api_version = 4;
+  bool fault_injection_enabled = 5;
+}
+
+// ---------------------------------------------------------------------------
+// State and telemetry
+// ---------------------------------------------------------------------------
+
+enum RobotState {
+  ROBOT_STATE_UNSPECIFIED = 0;
+  ROBOT_STATE_DISCONNECTED = 1;
+  ROBOT_STATE_INITIALIZING = 2;
+  ROBOT_STATE_DISABLED = 3;
+  ROBOT_STATE_READY = 4;
+  ROBOT_STATE_HOMING = 5;
+  ROBOT_STATE_RUNNING = 6;
+  ROBOT_STATE_FAULTED = 7;
+  ROBOT_STATE_EMERGENCY_STOPPED = 8;
+}
+
+enum FaultCode {
+  FAULT_CODE_UNSPECIFIED = 0;
+  FAULT_CODE_COMMUNICATION_LOST = 1;
+  FAULT_CODE_QUEUE_UNDERRUN = 2;
+  FAULT_CODE_SEGMENT_LATE = 3;
+  FAULT_CODE_LIMIT_HIT = 4;
+  FAULT_CODE_SOFT_LIMIT = 5;
+  FAULT_CODE_HOMING_FAILED = 6;
+  FAULT_CODE_MCU_FAULT = 7;
+  FAULT_CODE_PLUGIN_FAILED = 8;
+  FAULT_CODE_EMERGENCY_STOP = 9;
+}
+
+message Fault {
+  FaultCode code = 1;
+  string message = 2;
+  // Empty when the fault is not axis-specific.
+  string axis = 3;
+}
+
+message GetStatusRequest {}
+
+message Telemetry {
+  // Monotonic per engine process; gaps mean dropped samples.
+  uint64 seq = 1;
+  // Milliseconds since engine start.
+  uint64 time_ms = 2;
+  RobotState state = 3;
+  // Unset when no fault is latched.
+  optional Fault fault = 4;
+  McuTelemetry mcu = 5;
+  repeated AxisTelemetry axes = 6;
+}
+
+message McuTelemetry {
+  bool connected = 1;
+  // "virtual", "tcp" or "serial".
+  string transport = 2;
+  // The following are empty/zero until the MCU has identified itself.
+  string target = 3;
+  string board = 4;
+  string firmware_version = 5;
+  uint32 protocol_version = 6;
+  string build_hash = 7;
+  repeated string capabilities = 8;
+  uint32 queue_capacity = 9;
+  uint32 queue_depth = 10;
+  int64 clock_offset_us = 11;
+  uint32 rtt_us = 12;
+  uint64 tx_frames = 13;
+  uint64 rx_frames = 14;
+  uint64 crc_errors = 15;
+  // Unset while no link exists.
+  optional uint64 last_heartbeat_ms_ago = 16;
+}
+
+message AxisTelemetry {
+  string id = 1;
+  bool homed = 2;
+  bool enabled = 3;
+  double commanded_position = 4;
+  // From the MCU step counter (no encoder feedback in v1.0).
+  double measured_position = 5;
+  double velocity = 6;
+  bool endstop = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Configuration and plugins
+// ---------------------------------------------------------------------------
+
+message GetRobotConfigRequest {}
+
+enum JointKind {
+  JOINT_KIND_UNSPECIFIED = 0;
+  JOINT_KIND_REVOLUTE = 1;
+  JOINT_KIND_PRISMATIC = 2;
+}
+
+message RobotConfig {
+  string name = 1;
+  string profile = 2;
+  repeated AxisConfig axes = 3;
+  repeated McuConfig mcus = 4;
+}
+
+message McuConfig {
+  string name = 1;
+  string board = 2;
+  string transport = 3;
+  uint32 watchdog_ms = 4;
+}
+
+message AxisConfig {
+  string id = 1;
+  string name = 2;
+  JointKind kind = 3;
+  // "deg" or "mm".
+  string unit = 4;
+  double min = 5;
+  double max = 6;
+  double max_velocity = 7;
+  double max_acceleration = 8;
+  // Unset when the axis has no homing configuration.
+  optional double home_position = 9;
+  double steps_per_unit = 10;
+  string mcu = 11;
+  uint32 mcu_channel = 12;
+  // Device-graph details (for the Robot Composer view).
+  string actuator = 13;
+  string step_pin = 14;
+  string dir_pin = 15;
+  string enable_pin = 16;
+  // Empty when the axis has no endstop.
+  string endstop_pin = 17;
+}
+
+message ListPluginsRequest {}
+
+enum PluginState {
+  PLUGIN_STATE_UNSPECIFIED = 0;
+  PLUGIN_STATE_DISCOVERED = 1;
+  PLUGIN_STATE_VALIDATED = 2;
+  PLUGIN_STATE_RESOLVED = 3;
+  PLUGIN_STATE_INITIALIZED = 4;
+  PLUGIN_STATE_ACTIVE = 5;
+  PLUGIN_STATE_FAILED = 6;
+  PLUGIN_STATE_DEACTIVATED = 7;
+}
+
+message Plugin {
+  string id = 1;
+  string version = 2;
+  string api_version = 3;
+  // "builtin" or "wasm".
+  string kind = 4;
+  string description = 5;
+  repeated string provides = 6;
+  repeated string requires = 7;
+  repeated string permissions = 8;
+  PluginState state = 9;
+  // Empty unless `state` is FAILED.
+  string error = 10;
+}
+
+message ListPluginsResponse {
+  repeated Plugin plugins = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+message StreamEventsRequest {}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+}
+
+message LogEntry {
+  uint64 time_ms = 1;
+  LogLevel level = 2;
+  string message = 3;
+}
+
+message Event {
+  oneof event {
+    Telemetry telemetry = 1;
+    LogEntry log = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
+
+message CommandResponse {}
+
+message EnableRequest {}
+// Controlled stop (if moving) followed by drive disable.
+message DisableRequest {}
+
+message JogRequest {
+  string axis = 1;
+  double delta = 2;
+  // Optional cruise velocity; defaults to the axis maximum (25% when unhomed).
+  optional double velocity = 3;
+}
+
+message MoveToRequest {
+  string axis = 1;
+  double position = 2;
+  optional double velocity = 3;
+}
+
+message HomeRequest {
+  string axis = 1;
+}
+
+message StopRequest {}
+message EmergencyStopRequest {}
+// Never resumes motion; drives stay disabled and axes must be re-homed.
+message ResetFaultRequest {}
+
+message DebugDisconnectMcuRequest {}
+
+message DebugFailPluginRequest {
+  string id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Firmware
+// ---------------------------------------------------------------------------
+
+message ListTargetsRequest {}
+
+message FirmwareTarget {
+  string board = 1;
+  string description = 2;
+  // Empty for boards that need no firmware (virtual).
+  string firmware_target = 3;
+  string rust_target = 4;
+  uint32 step_channels = 5;
+  uint32 max_step_rate = 6;
+  bool provisional = 7;
+  bool is_virtual = 8;
+}
+
+message ListTargetsResponse {
+  repeated FirmwareTarget targets = 1;
+}
+
+message StartBuildRequest {
+  // MCU name from the loaded robot configuration; may be empty when the
+  // robot has exactly one MCU.
+  string mcu = 1;
+}
+
+message StartFlashRequest {
+  // A succeeded build job.
+  string build_job_id = 1;
+  // Operator confirmation that drives are powered off. Must be true.
+  bool confirm = 2;
+}
+
+message GetJobRequest {
+  string id = 1;
+}
+
+message ListJobsRequest {}
+
+enum JobKind {
+  JOB_KIND_UNSPECIFIED = 0;
+  JOB_KIND_BUILD = 1;
+  JOB_KIND_FLASH = 2;
+}
+
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_RUNNING = 2;
+  JOB_STATE_SUCCEEDED = 3;
+  JOB_STATE_FAILED = 4;
+}
+
+message FirmwareArtifact {
+  string board = 1;
+  string firmware_version = 2;
+  string build_hash = 3;
+  string image_sha256 = 4;
+  string toolchain = 5;
+  repeated string required_capabilities = 6;
+}
+
+message FirmwareJob {
+  string id = 1;
+  JobKind kind = 2;
+  JobState state = 3;
+  string mcu = 4;
+  // Unix seconds.
+  uint64 created_unix = 5;
+  uint64 finished_unix = 6;
+  // Human-readable summary of the outcome.
+  string message = 7;
+  // Tail of the build/flash log.
+  string log = 8;
+  // Set when a build succeeded.
+  optional FirmwareArtifact artifact = 9;
+}
+
+message ListJobsResponse {
+  repeated FirmwareJob jobs = 1;
+}
