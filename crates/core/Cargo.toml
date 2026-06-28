@@ -1,0 +1,27 @@
+[package]
+name = "motioncore-core"
+description = "MotionCore runtime: authoritative robot state, motion pipeline, MCU management, gRPC control plane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+motioncore-protocol = { workspace = true }
+motioncore-engine-api = { workspace = true }
+motioncore-safety = { workspace = true }
+motioncore-motion = { workspace = true }
+motioncore-device-graph = { workspace = true }
+motioncore-plugin-runtime = { workspace = true }
+motioncore-mcu-manager = { workspace = true }
+motioncore-simulator = { workspace = true }
+motioncore-firmware-builder = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tokio-serial = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+motioncore-builtin-plugins = { workspace = true }
+serde_json = { workspace = true }
