@@ -1,0 +1,41 @@
+# Single revolute axis on the virtual MCU — the v0.1 bench configuration.
+# Runs entirely in simulation; no hardware required.
+schema = 1
+
+[robot]
+name = "single-axis-bench"
+profile = "org.motioncore.robot.single_axis"
+
+[mcu.main]
+board = "virtual"
+transport = "virtual"
+watchdog_ms = 500
+
+[[axis]]
+id = "j1"
+name = "Base"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 0
+# 200 steps/rev * 8 microsteps * 10:1 gearbox / 360 deg
+steps_per_unit = 44.444444
+min = -170.0
+max = 170.0
+max_velocity = 90.0
+max_acceleration = 360.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP0"
+dir_pin = "DIR0"
+enable_pin = "EN0"
+
+[axis.endstop]
+pin = "ENDSTOP0"
+
+[axis.homing]
+direction = "negative"
+speed = 30.0
+position = -170.0
+max_travel = 360.0
