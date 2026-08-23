@@ -1,0 +1,7 @@
+# Used when running cargo from inside boards/stm32f4 (e.g. `cargo run --profile firmware`).
+[build]
+target = "thumbv7em-none-eabihf"
+
+[target.thumbv7em-none-eabihf]
+# Flashes via a debug probe (ST-Link / DAPLink).
+runner = "probe-rs run --chip STM32F411CEUx"

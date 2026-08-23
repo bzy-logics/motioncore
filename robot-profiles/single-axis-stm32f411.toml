@@ -1,0 +1,41 @@
+# Single revolute axis on the provisional STM32F411 "Black Pill" board.
+# Pin assignment must match boards/stm32f4/src/board.rs.
+# VERIFY WIRING, DRIVER CURRENT AND E-STOP CIRCUIT BEFORE POWERING MOTORS.
+schema = 1
+
+[robot]
+name = "single-axis-stm32"
+profile = "org.motioncore.robot.single_axis"
+
+[mcu.main]
+board = "stm32f411-blackpill"
+transport = "serial:///dev/ttyACM0"
+watchdog_ms = 500
+
+[[axis]]
+id = "j1"
+name = "Base"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 0
+steps_per_unit = 44.444444
+min = -170.0
+max = 170.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "PA0"
+dir_pin = "PA1"
+enable_pin = "PA2"
+
+[axis.endstop]
+pin = "PB0"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -170.0
+max_travel = 360.0

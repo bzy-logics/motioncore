@@ -1,0 +1,25 @@
+[package]
+name = "motioncore-board-stm32f4"
+description = "MotionCore firmware for STM32F411 (WeAct Black Pill) — provisional MVP board"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Cross-compiled only:
+#   cargo build -p motioncore-board-stm32f4 --profile firmware --target thumbv7em-none-eabihf
+[[bin]]
+name = "motioncore-board-stm32f4"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+motioncore-firmware-core = { workspace = true }
+motioncore-protocol = { workspace = true }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+critical-section = "1"
+panic-halt = "1"
+stm32f4xx-hal = { version = "0.22", features = ["stm32f411", "usb_fs"] }
+usb-device = "0.3"
+usbd-serial = "0.2"
