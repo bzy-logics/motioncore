@@ -27,7 +27,7 @@ syntax = "proto3";
 
 package motioncore.engine.v1;
 
-option go_package = "github.com/motioncore/motioncore-server/gen/motioncore/engine/v1;enginev1";
+option go_package = "github.com/bzyfuzy/ratavyr/gen/motioncore/engine/v1;enginev1";
 
 service EngineService {
   // Handshake: API and engine versions. Clients must check `api_version`.
