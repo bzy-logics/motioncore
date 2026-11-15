@@ -26,6 +26,20 @@ pub trait Hal {
     fn interlock_ok(&mut self) -> bool {
         true
     }
+    /// Called once at the end of every motion tick, after all `step` calls of
+    /// that tick.
+    ///
+    /// Boards that emit each pulse directly inside [`Hal::step`] (STM32, the
+    /// simulator) keep this default. Boards with hardware-timed pulse output
+    /// (RP2040 PIO) buffer the tick's steps in `step` and hand them to the
+    /// hardware here, spread over the next tick window.
+    ///
+    /// Returns `false` if the pulse hardware cannot keep up (output still
+    /// busy with an earlier window, buffer overflow, or rate beyond the pulse
+    /// timing limits); the firmware then latches `StepRateExceeded`.
+    fn flush_pulses(&mut self) -> bool {
+        true
+    }
 }
 
 /// Monotonic microsecond clock of the MCU.

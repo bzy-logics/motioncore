@@ -11,7 +11,7 @@ name = "single-axis-bench"
 profile = "org.motioncore.robot.single_axis" # robot-profile plugin id (must be active)
 
 [mcu.<name>]                                 # exactly one MCU in v0.1
-board = "virtual" | "stm32f411-blackpill"    # see `motioncore firmware targets`
+board = "virtual" | "stm32f411-blackpill" | "rp2040-pico"   # see `motioncore firmware targets`
 transport = "virtual" | "tcp://HOST:PORT" | "serial:///dev/ttyACM0"
 watchdog_ms = 500                            # 10..=10000, MCU communication watchdog
 

@@ -1,0 +1,12 @@
+[package]
+name = "motioncore-firmware-pio-step"
+description = "Hardware-timed STEP/DIR pulse generation for RP2040 PIO: program, command encoding and per-tick step buffering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+motioncore-firmware-core = { workspace = true }
+motioncore-protocol = { workspace = true }

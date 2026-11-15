@@ -1,0 +1,28 @@
+[package]
+name = "motioncore-board-rp2040"
+description = "MotionCore firmware for RP2040 (Raspberry Pi Pico) with PIO STEP/DIR output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Cross-compiled only:
+#   cargo build -p motioncore-board-rp2040 --profile firmware --target thumbv6m-none-eabi
+[[bin]]
+name = "motioncore-board-rp2040"
+path = "src/main.rs"
+test = false
+bench = false
+
+[dependencies]
+motioncore-firmware-core = { workspace = true }
+motioncore-firmware-pio-step = { workspace = true }
+motioncore-protocol = { workspace = true }
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+critical-section = "1"
+embedded-hal = "1"
+panic-halt = "1"
+rp2040-hal = { version = "0.12", features = ["rt", "critical-section-impl", "rom-func-cache"] }
+rp2040-boot2 = "0.3"
+usb-device = "0.3"
+usbd-serial = "0.2"

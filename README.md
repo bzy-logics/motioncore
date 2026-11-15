@@ -12,7 +12,8 @@ This is the `motioncore` repository — one of three:
 | [sindrava](../sindrava) | Vite + React + Three.js dashboard | optional |
 
 > **Status: v0.2 development.** Runs end-to-end in simulation. The STM32F411
-> firmware compiles but has **not** been validated on hardware. Nothing here
+> and RP2040 firmware compile and are host-tested, but have **not** been
+> validated on hardware. Nothing here
 > is a certified safety system — always use an independent hardware E-stop
 > that removes driver power.
 
@@ -64,8 +65,10 @@ crates/
   firmware-hal/      hardware traits implemented by boards and the simulator (no_std)
   firmware-stepper/  step/dir module: segments, homing, controlled stop (no_std)
   firmware-core/     MCU runtime: dispatch, watchdog, fault latching (no_std)
-  firmware-builder/  restricted configure/build/flash/verify
+  firmware-pio-step/ RP2040 PIO STEP/DIR program, command encoding, step buffering (no_std)
+  firmware-builder/  restricted configure/build/flash/verify, ELF -> UF2
 boards/stm32f4/      STM32F411 "Black Pill" firmware (cross-compiled only)
+boards/rp2040/       Raspberry Pi Pico firmware, PIO step output (cross-compiled only)
 plugins/builtin/     reference plugins, built against plugin-sdk
 robot-profiles/      example robot configurations
 docs/                specification, architecture, robot config schema, bring-up
@@ -90,6 +93,7 @@ Print the contract a binary was built with: `motioncore engine-api proto`.
 cargo test            # all host crates: protocol, firmware runtime, planner, graph, plugins, link, gRPC end-to-end
 cargo clippy --all-targets
 cargo build -p motioncore-board-stm32f4 --profile firmware --target thumbv7em-none-eabihf
+cargo build -p motioncore-board-rp2040  --profile firmware --target thumbv6m-none-eabi
 ```
 
 ## Firmware
@@ -99,17 +103,28 @@ motioncore firmware targets
 motioncore firmware build  --config robot-profiles/single-axis-stm32f411.toml
 motioncore firmware flash  --artifact build/firmware/main --yes        # probe-rs; refused while drives are on
 motioncore firmware verify --artifact build/firmware/main --device /dev/ttyACM0
+
+motioncore firmware build  --board rp2040-pico                         # reference profile, writes firmware.uf2
+motioncore firmware flash  --board rp2040-pico --yes                   # UF2 to the BOOTSEL drive
+motioncore firmware verify --board rp2040-pico --device /dev/ttyACM0
 motioncore mcu list
 ```
 
-Read [docs/hardware-bringup.md](docs/hardware-bringup.md) before connecting a motor.
+| board | channels | step output | flashing |
+|---|---|---|---|
+| `stm32f411-blackpill` | 1 | GPIO, 20 kHz timer interrupt | probe-rs (SWD) |
+| `rp2040-pico` | 6 | PIO, one state machine per axis | UF2 (BOOTSEL) |
+
+Read [docs/hardware-bringup.md](docs/hardware-bringup.md) (STM32F411) or
+[docs/rp2040.md](docs/rp2040.md) (RP2040) before connecting a motor.
 
 ## Documentation
 
 - [docs/specification.md](docs/specification.md) — specification (draft v0.2)
 - [docs/architecture.md](docs/architecture.md) — implementation notes and decisions
 - [docs/robot-config.md](docs/robot-config.md) — robot configuration schema
-- [docs/hardware-bringup.md](docs/hardware-bringup.md) — first physical axis
+- [docs/hardware-bringup.md](docs/hardware-bringup.md) — first physical axis (STM32F411)
+- [docs/rp2040.md](docs/rp2040.md) — RP2040 firmware: PIO design, pin map, flashing, validation
 
 ## License
 

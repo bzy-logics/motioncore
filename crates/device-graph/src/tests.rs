@@ -77,7 +77,7 @@ fn reports_all_problems_at_once() {
 #[test]
 fn rejects_unknown_pins_boards_and_rates() {
     let v = issues(&GOOD.replace("\"PB0\"", "\"PZ9\""));
-    assert!(v[0].message.contains("not available"));
+    assert!(v.iter().any(|i| i.message.contains("not available")), "{v:?}");
 
     let v = issues(&GOOD.replace("stm32f411-blackpill", "arduino-uno"));
     assert!(v[0].message.contains("unknown board"));
@@ -118,4 +118,70 @@ fn shipped_profiles_are_valid() {
         }
     }
     assert!(n >= 2, "expected shipped robot profiles in {}", dir.display());
+}
+
+#[test]
+fn profile_must_match_firmware_pin_map() {
+    // PB1 exists on the board but the firmware wires channel 0's endstop to PB0.
+    let v = issues(&GOOD.replace("\"PB0\"", "\"PB1\""));
+    assert_eq!(v.len(), 1, "{v:?}");
+    assert_eq!(v[0].path, "axis[0](j1).endstop.pin");
+    assert!(v[0].message.contains("wires channel 0 endstop.pin to PB0"), "{v:?}");
+}
+
+fn rp2040_axis(channel: u8) -> String {
+    let b = boards::find("rp2040-pico").unwrap();
+    let pins = b.channel_pins[channel as usize];
+    format!(
+        "[[axis]]
+id = \"a{channel}\"
+name = \"A\"
+kind = \"revolute\"
+unit = \"deg\"
+mcu = \"main\"
+channel = {channel}
+         steps_per_unit = 10.0
+min = -90.0
+max = 90.0
+max_velocity = 90.0
+max_acceleration = 360.0
+         [axis.driver]
+actuator = \"org.motioncore.actuator.step_dir\"
+step_pin = \"{}\"
+dir_pin = \"{}\"
+enable_pin = \"{}\"
+",
+        pins.step, pins.dir, pins.enable
+    )
+}
+
+const RP_HEAD: &str = "schema = 1
+[robot]
+name = \"r\"
+profile = \"p\"
+[mcu.main]
+board = \"rp2040-pico\"
+transport = \"serial:///dev/ttyACM0\"
+";
+
+#[test]
+fn rp2040_routes_six_channels_and_rejects_a_seventh() {
+    let six: String = (0..6).map(rp2040_axis).collect();
+    let r = parse(&format!("{RP_HEAD}{six}")).unwrap();
+    assert_eq!(r.file.axes.len(), 6);
+    let mut channels: Vec<u8> = r.file.axes.iter().map(|a| a.channel).collect();
+    channels.dedup();
+    assert_eq!(channels, [0, 1, 2, 3, 4, 5]);
+
+    let seventh = rp2040_axis(0).replace("channel = 0", "channel = 6").replace("id = \"a0\"", "id = \"a6\"");
+    let v = issues(&format!("{RP_HEAD}{six}{seventh}"));
+    assert!(v.iter().any(|i| i.message.contains("6 step channel(s)")), "{v:?}");
+}
+
+#[test]
+fn rp2040_rejects_swapped_step_and_dir() {
+    let swapped = rp2040_axis(1).replace("step_pin = \"GP2\"", "step_pin = \"GPX\"").replace("dir_pin = \"GP3\"", "dir_pin = \"GP2\"").replace("GPX", "GP3");
+    let v = issues(&format!("{RP_HEAD}{swapped}"));
+    assert!(v.iter().any(|i| i.path == "axis[0](a1).driver.step_pin"), "{v:?}");
+    assert!(v.iter().any(|i| i.path == "axis[0](a1).driver.dir_pin"), "{v:?}");
 }

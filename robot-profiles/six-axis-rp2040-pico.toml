@@ -1,0 +1,185 @@
+# Six revolute axes on a Raspberry Pi Pico (RP2040) with PIO step output.
+# Pin assignment is fixed by the firmware (boards/rp2040/src/board.rs) and
+# checked by the resolver. GP27 is the safety interlock input: it must be
+# pulled to GND through the E-stop chain's monitoring contact, otherwise the
+# firmware refuses to enable drives.
+# Reference profile for `motioncore firmware build --board rp2040-pico`.
+# VERIFY WIRING, DRIVER CURRENT AND E-STOP CIRCUIT BEFORE POWERING MOTORS.
+schema = 1
+
+[robot]
+name = "six-axis-rp2040"
+profile = "org.motioncore.robot.six_axis"
+
+[mcu.main]
+board = "rp2040-pico"
+transport = "serial:///dev/ttyACM0"
+watchdog_ms = 500
+
+[[axis]]
+id = "j1"
+name = "Base"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 0
+steps_per_unit = 44.444444
+min = -170.0
+max = 170.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP0"
+dir_pin = "GP1"
+enable_pin = "GP12"
+
+[axis.endstop]
+pin = "GP18"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -170.0
+max_travel = 350.0
+
+[[axis]]
+id = "j2"
+name = "Shoulder"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 1
+steps_per_unit = 44.444444
+min = -90.0
+max = 90.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP2"
+dir_pin = "GP3"
+enable_pin = "GP13"
+
+[axis.endstop]
+pin = "GP19"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -90.0
+max_travel = 190.0
+
+[[axis]]
+id = "j3"
+name = "Elbow"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 2
+steps_per_unit = 44.444444
+min = -135.0
+max = 135.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP4"
+dir_pin = "GP5"
+enable_pin = "GP14"
+
+[axis.endstop]
+pin = "GP20"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -135.0
+max_travel = 280.0
+
+[[axis]]
+id = "j4"
+name = "Wrist roll"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 3
+steps_per_unit = 44.444444
+min = -180.0
+max = 180.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP6"
+dir_pin = "GP7"
+enable_pin = "GP15"
+
+[axis.endstop]
+pin = "GP21"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -180.0
+max_travel = 370.0
+
+[[axis]]
+id = "j5"
+name = "Wrist pitch"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 4
+steps_per_unit = 44.444444
+min = -110.0
+max = 110.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP8"
+dir_pin = "GP9"
+enable_pin = "GP16"
+
+[axis.endstop]
+pin = "GP22"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -110.0
+max_travel = 230.0
+
+[[axis]]
+id = "j6"
+name = "Tool"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 5
+steps_per_unit = 44.444444
+min = -180.0
+max = 180.0
+max_velocity = 45.0
+max_acceleration = 180.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP10"
+dir_pin = "GP11"
+enable_pin = "GP17"
+
+[axis.endstop]
+pin = "GP26"
+
+[axis.homing]
+direction = "negative"
+speed = 15.0
+position = -180.0
+max_travel = 370.0

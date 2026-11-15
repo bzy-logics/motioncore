@@ -277,6 +277,9 @@ impl<const AXES: usize, const Q: usize> McuCore<AXES, Q> {
                 }
             }
         }
+        if !hal.flush_pulses() {
+            self.trip(FaultCode::StepRateExceeded, None, hal);
+        }
     }
 }
 

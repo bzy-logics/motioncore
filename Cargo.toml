@@ -13,12 +13,14 @@ members = [
     "crates/simulator",
     "crates/firmware-hal",
     "crates/firmware-stepper",
+    "crates/firmware-pio-step",
     "crates/firmware-core",
     "crates/firmware-builder",
     "crates/core",
     "crates/cli",
     "plugins/builtin",
     "boards/stm32f4",
+    "boards/rp2040",
 ]
 # Host-buildable crates. Board crates are cross-compiled explicitly, e.g.
 #   cargo build -p motioncore-board-stm32f4 --profile firmware --target thumbv7em-none-eabihf
@@ -36,6 +38,7 @@ default-members = [
     "crates/simulator",
     "crates/firmware-hal",
     "crates/firmware-stepper",
+    "crates/firmware-pio-step",
     "crates/firmware-core",
     "crates/firmware-builder",
     "crates/core",
@@ -63,6 +66,7 @@ motioncore-mcu-manager = { path = "crates/mcu-manager" }
 motioncore-simulator = { path = "crates/simulator" }
 motioncore-firmware-hal = { path = "crates/firmware-hal" }
 motioncore-firmware-stepper = { path = "crates/firmware-stepper" }
+motioncore-firmware-pio-step = { path = "crates/firmware-pio-step" }
 motioncore-firmware-core = { path = "crates/firmware-core" }
 motioncore-firmware-builder = { path = "crates/firmware-builder" }
 motioncore-core = { path = "crates/core" }

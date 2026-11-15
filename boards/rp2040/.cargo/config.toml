@@ -1,0 +1,8 @@
+# Used when running cargo from inside boards/rp2040.
+[build]
+target = "thumbv6m-none-eabi"
+
+[target.thumbv6m-none-eabi]
+# With a debug probe on SWD. Without one, use the UF2 / BOOTSEL workflow
+# (`motioncore firmware flash`), see docs/rp2040.md.
+runner = "probe-rs run --chip RP2040"

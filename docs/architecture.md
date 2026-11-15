@@ -36,16 +36,25 @@ server.
 ## Firmware layering
 
 ```text
-boards/stm32f4 ──┐                 crates/simulator ──┐
-  (TIM3 tick,    │ impl Hal          (tokio tick,     │ impl Hal
-   USB CDC,      ▼                    duplex/TCP)     ▼
-   IWDG)      firmware-core  ◀── identical runtime ── firmware-core
+boards/stm32f4 ──┐   boards/rp2040 ──┐        crates/simulator ──┐
+  (TIM3 tick,    │     (TIMER tick,   │          (tokio tick,     │ impl Hal
+   USB CDC,      │      USB CDC, WDT, │           duplex/TCP)     │
+   IWDG)         ▼      PIO step out) ▼                           ▼
+              firmware-core  ◀────── identical runtime ────── firmware-core
                  │  dispatch, watchdog, faults, status
                  ▼
               firmware-stepper   per-channel queue, segment execution, homing, stop
                  │
-              firmware-hal       Hal / Clock traits
+              firmware-hal       Hal / Clock traits (+ flush_pulses)
+                 │
+              firmware-pio-step  RP2040 only: PIO program + per-tick step buffering
 ```
+
+`Hal::step` is called once per due step. Boards that output pulses directly
+(STM32F411, simulator) emit them there. The RP2040 records them and, in
+`Hal::flush_pulses` at the end of the tick, hands them to PIO state
+machines that spread them evenly over the next tick window with guaranteed
+pulse and direction timing (see [rp2040.md](rp2040.md)).
 
 Board crates are workspace members but excluded from `default-members`; they
 are cross-compiled with the `firmware` profile (`opt-level = "s"`, LTO,
@@ -103,18 +112,20 @@ hardware E-stop circuit; it cannot replace one.
 | Open decision | Choice | Revisit when |
 |---|---|---|
 | First board | WeAct STM32F411CEU6 "Black Pill" (provisional) | after bench tests |
+| Second board | Raspberry Pi Pico (RP2040), PIO step output, 6 channels (provisional) | after bench tests |
 | Actuator types | step/dir only | servo PWM module |
 | Host plugins | builtin (compiled-in, SDK-based); WASM manifests validated, execution deferred | Wasmtime integration |
 | Config format | TOML, `schema = 1`, unknown keys rejected | first migration |
 | Homing | single-switch search, position assigned at trigger | back-off + slow second touch |
 | Go ↔ Rust | gRPC (tonic / grpc-go), proto compiled with `protox`/`buf` (no `protoc`) | — |
-| Flashing | `probe-rs` over SWD | DFU/bootloader support |
+| Flashing | per board: `probe-rs` over SWD (STM32F411), UF2 to the BOOTSEL drive (RP2040) | DFU for STM32 |
 
 ## Known limitations
 
 * One MCU per robot; single-axis motion at a time (`motion::plan_synchronized`
   exists but is not wired up). Telemetry has one MCU block.
 * "Measured" position is the MCU step counter — no encoder feedback yet.
-* Serial transport, flashing and the STM32 firmware are untested on hardware.
+* Serial transport, flashing and the STM32F411 and RP2040 firmware are
+  untested on hardware.
 * Virtual MCU lateness tolerance is 40 ms because desktop OS timers are
   coarse (~15 ms on Windows); hardware uses 5 ms.

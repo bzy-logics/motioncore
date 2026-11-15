@@ -220,15 +220,7 @@ impl Engine {
         tokio::spawn(self.clone().event_loop(events));
 
         let id = link.identify().await?;
-        let caps: Vec<&str> = capability_names(id.capabilities).collect();
-        for need in &self.mcu.required_firmware_capabilities {
-            if !caps.contains(need) {
-                anyhow::bail!("firmware lacks required capability '{need}' (has: {})", caps.join(", "));
-            }
-        }
-        if let Some(a) = self.robot.file.axes.iter().find(|a| a.channel >= id.axes) {
-            anyhow::bail!("axis '{}' uses channel {} but firmware reports {} channels", a.id, a.channel, id.axes);
-        }
+        check_identity(&self.mcu, &self.robot.file.axes, &id).map_err(|e| anyhow::anyhow!(e))?;
         let clock = link.sync_clock(8).await?;
         link.command(HostMsg::SetWatchdog { timeout_ms: self.mcu.watchdog_ms }).await?;
         for i in 0..self.robot.file.axes.len() {
@@ -247,7 +239,7 @@ impl Engine {
                 id.firmware_version.1,
                 id.firmware_version.2,
                 id.build_hash,
-                caps.join(", "),
+                capability_names(id.capabilities).collect::<Vec<_>>().join(", "),
                 clock.offset_us,
                 clock.rtt_us
             ),
@@ -875,6 +867,29 @@ impl Engine {
     }
 }
 
+/// Is the connected firmware the one this configuration was built for?
+/// Compares only the identity the MCU reports (board id, capabilities,
+/// channel count), never architecture details, so the host stays
+/// independent of the MCU family.
+fn check_identity(mcu: &ResolvedMcu, axes: &[AxisSection], id: &Identity) -> Result<(), String> {
+    if id.board.as_str() != mcu.board.id {
+        return Err(format!(
+            "MCU '{}' reports board '{}' (target {}), but the configuration expects '{}'; flash the matching firmware",
+            mcu.name, id.board, id.target, mcu.board.id
+        ));
+    }
+    let caps: Vec<&str> = capability_names(id.capabilities).collect();
+    for need in &mcu.required_firmware_capabilities {
+        if !caps.contains(need) {
+            return Err(format!("firmware lacks required capability '{need}' (has: {})", caps.join(", ")));
+        }
+    }
+    if let Some(a) = axes.iter().filter(|a| a.mcu == mcu.name).find(|a| a.channel >= id.axes) {
+        return Err(format!("axis '{}' uses channel {} but firmware reports {} channels", a.id, a.channel, id.axes));
+    }
+    Ok(())
+}
+
 /// Wait for an MCU status report that arrives **after** this call and
 /// satisfies `ok`. Telemetry received earlier never counts; a reported MCU
 /// fault, link loss or the timeout is an error.
@@ -963,4 +978,62 @@ fn fault_pb(f: &Fault) -> pb::Fault {
         FaultCode::EmergencyStop => pb::FaultCode::EmergencyStop,
     };
     pb::Fault { code: code as i32, message: f.message.clone(), axis: f.axis.clone().unwrap_or_default() }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+    use motioncore_protocol::caps;
+
+    fn robot(text: &str) -> ResolvedRobot {
+        motioncore_device_graph::parse(text).unwrap()
+    }
+
+    fn id(board: &str, target: &str, capabilities: u32, axes: u8) -> Identity {
+        Identity {
+            protocol_version: motioncore_protocol::PROTOCOL_VERSION,
+            firmware_version: (0, 2, 0),
+            target: target.try_into().unwrap(),
+            board: board.try_into().unwrap(),
+            build_hash: 0,
+            capabilities,
+            axes,
+            queue_capacity: 32,
+        }
+    }
+
+    const ALL: u32 = caps::STEPPER_STEP_DIR | caps::ENDSTOP | caps::WATCHDOG;
+
+    fn profile(name: &str) -> String {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../robot-profiles");
+        std::fs::read_to_string(dir.join(name)).unwrap()
+    }
+
+    #[test]
+    fn matching_firmware_is_accepted() {
+        let r = robot(&profile("six-axis-rp2040-pico.toml"));
+        let m = &r.mcus["main"];
+        assert_eq!(check_identity(m, &r.file.axes, &id("rp2040-pico", "rp2040", ALL, 6)), Ok(()));
+        let r = robot(&profile("single-axis-stm32f411.toml"));
+        let m = &r.mcus["main"];
+        assert_eq!(check_identity(m, &r.file.axes, &id("stm32f411-blackpill", "stm32f4", ALL, 1)), Ok(()));
+    }
+
+    #[test]
+    fn wrong_board_is_rejected() {
+        let r = robot(&profile("single-axis-stm32f411.toml"));
+        let m = &r.mcus["main"];
+        let e = check_identity(m, &r.file.axes, &id("rp2040-pico", "rp2040", ALL, 6)).unwrap_err();
+        assert!(e.contains("reports board 'rp2040-pico'") && e.contains("expects 'stm32f411-blackpill'"), "{e}");
+    }
+
+    #[test]
+    fn missing_capability_or_channels_are_rejected() {
+        let r = robot(&profile("six-axis-rp2040-pico.toml"));
+        let m = &r.mcus["main"];
+        let e = check_identity(m, &r.file.axes, &id("rp2040-pico", "rp2040", caps::STEPPER_STEP_DIR | caps::WATCHDOG, 6)).unwrap_err();
+        assert!(e.contains("endstop"), "{e}");
+        let e = check_identity(m, &r.file.axes, &id("rp2040-pico", "rp2040", ALL, 4)).unwrap_err();
+        assert!(e.contains("firmware reports 4 channels"), "{e}");
+    }
 }

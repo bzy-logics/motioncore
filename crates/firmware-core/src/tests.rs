@@ -11,6 +11,10 @@ struct SimHal {
     steps: [u64; 2],
     /// Simulated external safety interlock (E-stop chain) is open.
     interlock_open: bool,
+    /// Number of `flush_pulses` calls.
+    flushes: u64,
+    /// Simulated pulse-hardware overrun.
+    pulse_overrun: bool,
 }
 
 impl Hal for SimHal {
@@ -27,6 +31,10 @@ impl Hal for SimHal {
     }
     fn interlock_ok(&mut self) -> bool {
         !self.interlock_open
+    }
+    fn flush_pulses(&mut self) -> bool {
+        self.flushes += 1;
+        !self.pulse_overrun
     }
 }
 
@@ -392,4 +400,27 @@ fn stalled_tick_during_motion_faults_instead_of_bursting() {
     assert_eq!(r.core.fault(), Some(FaultCode::SegmentLate));
     assert_eq!(r.hal.pos[0], p, "no catch-up burst");
     assert!(!r.hal.enabled[0]);
+}
+
+#[test]
+fn pulses_are_flushed_once_per_tick() {
+    let mut r = Rig::new();
+    let before = r.hal.flushes;
+    r.run_for(10_000); // 100 ticks of 100 µs
+    assert_eq!(r.hal.flushes - before, 100);
+}
+
+#[test]
+fn pulse_hardware_overrun_faults_and_disables() {
+    let mut r = Rig::new();
+    for s in const_move(r.now + 1000, 20, 3, 10_000) {
+        r.cmd(HostMsg::QueueSegment(s));
+    }
+    r.run_for(5_000);
+    assert_eq!(r.core.fault(), None);
+    r.hal.pulse_overrun = true;
+    r.run_for(200);
+    assert_eq!(r.core.fault(), Some(FaultCode::StepRateExceeded));
+    assert!(!r.hal.enabled[0]);
+    assert!(r.drain().iter().any(|m| matches!(m, McuMsg::Fault { code: FaultCode::StepRateExceeded, axis: None })));
 }

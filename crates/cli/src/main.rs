@@ -20,6 +20,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use motioncore_core::{engine, firmware::FirmwareJobs, grpc};
+use motioncore_device_graph::FlashMethod;
 use motioncore_engine_api::v1 as pb;
 use motioncore_firmware_builder as builder;
 use motioncore_plugin_runtime::{PluginContext, Registry, CORE_CAPABILITIES};
@@ -137,25 +138,37 @@ enum FirmwareCmd {
         #[arg(long)]
         mcu: Option<String>,
     },
-    /// Configure and compile.
+    /// Configure and compile, from a robot configuration or a board's
+    /// reference profile (`--board`, artifacts in build/firmware/<board>).
     Build {
+        #[arg(long, required_unless_present = "board", conflicts_with = "board")]
+        config: Option<PathBuf>,
         #[arg(long)]
-        config: PathBuf,
-        #[arg(long)]
+        board: Option<String>,
+        #[arg(long, requires = "config")]
         mcu: Option<String>,
     },
-    /// Flash a built artifact via probe-rs (drives must be off).
+    /// Flash a built artifact with the board's method: probe-rs (STM32F411)
+    /// or UF2 to the BOOTSEL drive (RP2040). Drives must be off.
     Flash {
+        #[arg(long, required_unless_present = "board", conflicts_with = "board")]
+        artifact: Option<PathBuf>,
+        /// Use the artifact of `firmware build --board <id>`.
         #[arg(long)]
-        artifact: PathBuf,
+        board: Option<String>,
+        /// Mount point of the UF2 bootloader drive (default: auto-detect).
+        #[arg(long)]
+        uf2_volume: Option<PathBuf>,
         /// Confirm that drives are powered off.
         #[arg(long)]
         yes: bool,
     },
     /// Check the running firmware against an artifact.
     Verify {
+        #[arg(long, required_unless_present = "board", conflicts_with = "board")]
+        artifact: Option<PathBuf>,
         #[arg(long)]
-        artifact: PathBuf,
+        board: Option<String>,
         #[arg(long)]
         device: String,
     },
@@ -295,19 +308,37 @@ async fn start(config: &Path, listen: &str, plugin_dir: Option<&Path>, repo: Opt
     grpc::serve(engine, jobs, addr, shutdown).await
 }
 
+/// `--artifact <dir>` or the directory of a `--board` build.
+fn artifact_dir(artifact: Option<PathBuf>, board: Option<String>) -> Result<PathBuf> {
+    match (artifact, board) {
+        (Some(a), _) => Ok(a),
+        (None, Some(b)) => {
+            builder::board(&b)?;
+            Ok(builder::board_artifact_dir(&builder::find_repo_root(&std::env::current_dir()?)?, &b))
+        }
+        (None, None) => bail!("--artifact or --board is required"),
+    }
+}
+
 async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
     let root = || builder::find_repo_root(&std::env::current_dir()?);
     match cmd {
         FirmwareCmd::Targets => {
-            println!("{:<22} {:<8} {:<24} {:>8} {:>11}  description", "board", "target", "rust target", "channels", "max steps/s");
+            println!("{:<22} {:<8} {:<24} {:>8} {:>11} {:<9} description", "board", "target", "rust target", "channels", "max steps/s", "flash");
             for b in builder::targets() {
+                let flash = match b.flash {
+                    FlashMethod::None => "-",
+                    FlashMethod::ProbeRs { .. } => "probe-rs",
+                    FlashMethod::Uf2 { .. } => "uf2",
+                };
                 println!(
-                    "{:<22} {:<8} {:<24} {:>8} {:>11}  {}{}",
+                    "{:<22} {:<8} {:<24} {:>8} {:>11} {:<9} {}{}",
                     b.id,
                     b.firmware_target.unwrap_or("-"),
                     b.rust_target.unwrap_or("-"),
                     b.step_channels,
                     b.max_step_rate,
+                    flash,
                     b.description,
                     if b.provisional { " [provisional]" } else { "" }
                 );
@@ -320,11 +351,17 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
             println!("{}", toml::to_string_pretty(&c.lock)?);
             Ok(())
         }
-        FirmwareCmd::Build { config, mcu } => {
-            builder::build(&root()?, &config, mcu.as_deref(), &mut |l| println!("{l}"))?;
+        FirmwareCmd::Build { config, board, mcu } => {
+            let root = root()?;
+            match (config, board) {
+                (Some(config), _) => builder::build(&root, &config, mcu.as_deref(), &mut |l| println!("{l}"))?,
+                (None, Some(board)) => builder::build_board(&root, &board, &mut |l| println!("{l}"))?,
+                (None, None) => unreachable!("clap requires --config or --board"),
+            };
             Ok(())
         }
-        FirmwareCmd::Flash { artifact, yes } => {
+        FirmwareCmd::Flash { artifact, board, uf2_volume, yes } => {
+            let artifact = artifact_dir(artifact, board)?;
             let m = builder::load_artifact(&artifact)?;
             // Refuse while a reachable engine reports energised drives.
             match client::connect(engine_addr).await {
@@ -341,10 +378,12 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
             if !yes {
                 bail!("refusing to flash without operator confirmation: re-run with --yes once drives are powered off");
             }
-            builder::flash(&artifact, &mut |l| println!("{l}"))?;
+            let opts = builder::FlashOptions { uf2_volume, uf2_timeout: None };
+            builder::flash_with(&artifact, &opts, &mut |l| println!("{l}"))?;
             Ok(())
         }
-        FirmwareCmd::Verify { artifact, device } => {
+        FirmwareCmd::Verify { artifact, board, device } => {
+            let artifact = artifact_dir(artifact, board)?;
             let r = builder::verify(&artifact, &device).await?;
             println!("MCU reports: target {} board {} fw {} build {} caps [{}]", r.target, r.board, r.firmware_version, r.build_hash, r.capabilities.join(", "));
             if r.problems.is_empty() {

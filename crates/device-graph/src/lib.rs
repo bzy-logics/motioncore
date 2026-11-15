@@ -15,7 +15,7 @@ use std::path::Path;
 
 pub mod boards;
 
-pub use boards::{Board, BOARDS};
+pub use boards::{Board, ChannelPins, FlashMethod, BOARDS};
 
 // ---------------------------------------------------------------------------
 // Configuration file schema (TOML)
@@ -330,6 +330,23 @@ pub fn resolve(file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
                 issues.push(Issue { path, message: format!("pin '{pin}' already assigned to {owner}") });
             }
         };
+        // Boards with a fixed firmware pin map: the profile must match it.
+        if let Some(fixed) = board.channel_pins.get(a.channel as usize) {
+            let fixed_pin = |pin: &str, want: &str, role: &str, issues: &mut Vec<Issue>| {
+                if pin != want {
+                    issues.push(Issue {
+                        path: format!("{p}.{role}"),
+                        message: format!("board '{}' firmware wires channel {} {role} to {want}, not '{pin}'", board.id, a.channel),
+                    });
+                }
+            };
+            fixed_pin(&a.driver.step_pin, fixed.step, "driver.step_pin", &mut issues);
+            fixed_pin(&a.driver.dir_pin, fixed.dir, "driver.dir_pin", &mut issues);
+            fixed_pin(&a.driver.enable_pin, fixed.enable, "driver.enable_pin", &mut issues);
+            if let Some(e) = &a.endstop {
+                fixed_pin(&e.pin, fixed.endstop, "endstop.pin", &mut issues);
+            }
+        }
         claim(&a.driver.step_pin, "driver.step_pin", &mut issues);
         claim(&a.driver.dir_pin, "driver.dir_pin", &mut issues);
         claim(&a.driver.enable_pin, "driver.enable_pin", &mut issues);
