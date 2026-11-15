@@ -1,21 +1,33 @@
 # MotionCore
 
-A plugin-first, hardware-independent robotics motion-control
-runtime: **Rust** engine, MCU firmware, plugins and firmware builder.
+A plugin-first, hardware-independent robotics motion-control system in
+**Rust**: the engine, a simulator, a firmware builder, a CLI, and MCU firmware
+for **STM32F411** and **RP2040** (PIO-timed step/dir, up to 6 axes).
+
+- **One firmware core, many boards:** the protocol, segment execution,
+  homing, watchdog and fault handling are shared by every MCU target and the
+  simulator. A board only supplies pins, timing and transport.
+- **Safety first:** the MCU enforces soft limits, endstops, the step-rate
+  ceiling and a communication watchdog on its own, and latches faults that
+  can only be cleared once the hazard is gone.
+- **Deterministic step output:** on RP2040, PIO state machines time every
+  pulse, with guaranteed pulse widths and direction setup/hold, and no catch-up
+  bursts.
+- **Reproducible firmware:** builds are pinned by a lockfile, artifacts are
+  checksummed, and the running build is verified over the wire.
 
 This is the `motioncore` repository — one of three:
 
 | Repository | Role | Required? |
 |---|---|---|
 | **motioncore** (this) | Engine (state authority), firmware, simulator, plugins, builder, `motioncore` CLI, engine API contract | yes |
-| [ratavyr](../ratavyr) | Go REST/WebSocket gateway, auth, firmware job orchestration | optional |
-| [sindrava](../sindrava) | Vite + React + Three.js dashboard | optional |
+| [ratavyr](https://github.com/bzyfuzy/ratavyr) | Go REST/WebSocket gateway, auth, firmware job orchestration | optional |
+| [sindrava](https://github.com/bzyfuzy/sindrava) | Vite + React + Three.js dashboard | optional |
 
 > **Status: v0.2 development.** Runs end-to-end in simulation. The STM32F411
 > and RP2040 firmware compile and are host-tested, but have **not** been
-> validated on hardware. Nothing here
-> is a certified safety system — always use an independent hardware E-stop
-> that removes driver power.
+> validated on hardware. Nothing here is a certified safety system — always
+> use an independent hardware E-stop that removes driver power.
 
 ```text
 sindrava ──REST/WS──▶ ratavyr ──gRPC (engine-api v1)──▶ motioncore engine ──COBS+CRC frames──▶ MCU firmware
@@ -23,9 +35,23 @@ sindrava ──REST/WS──▶ ratavyr ──gRPC (engine-api v1)──▶ moti
                                          motioncore CLI ──gRPC────────────┘                                      simulator)
 ```
 
+## Supported hardware
+
+| board | step channels | step output | flashing | status |
+|---|---|---|---|---|
+| `virtual` | 6 | simulated (shared firmware core) | – | host-tested |
+| `stm32f411-blackpill` | 1 | GPIO, 20 kHz timer interrupt | probe-rs (SWD) | provisional, unverified on hardware |
+| `rp2040-pico` | 6 | PIO, one state machine per axis | UF2 (BOOTSEL) | provisional, unverified on hardware |
+
+Physical boards use external step/dir drivers and 3.3 V logic. See
+[docs/rp2040.md](docs/rp2040.md) and
+[docs/hardware-bringup.md](docs/hardware-bringup.md) for wiring and the
+hardware validation procedure.
+
 ## Quick start (headless, simulation)
 
-Requirements: Rust stable (see `rust-toolchain.toml`).
+Requirements: Rust stable (see `rust-toolchain.toml`; it also installs the
+`thumbv7em-none-eabihf` and `thumbv6m-none-eabi` targets for firmware builds).
 
 ```bash
 cargo build
@@ -110,12 +136,8 @@ motioncore firmware verify --board rp2040-pico --device /dev/ttyACM0
 motioncore mcu list
 ```
 
-| board | channels | step output | flashing |
-|---|---|---|---|
-| `stm32f411-blackpill` | 1 | GPIO, 20 kHz timer interrupt | probe-rs (SWD) |
-| `rp2040-pico` | 6 | PIO, one state machine per axis | UF2 (BOOTSEL) |
-
-Read [docs/hardware-bringup.md](docs/hardware-bringup.md) (STM32F411) or
+Flashing is refused while a reachable engine reports enabled drives, and
+only `verify` confirms which build is running. Read [docs/hardware-bringup.md](docs/hardware-bringup.md) (STM32F411) or
 [docs/rp2040.md](docs/rp2040.md) (RP2040) before connecting a motor.
 
 ## Documentation
