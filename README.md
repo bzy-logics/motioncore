@@ -21,8 +21,8 @@ This is the `motioncore` repository — one of three:
 | Repository | Role | Required? |
 |---|---|---|
 | **motioncore** (this) | Engine (state authority), firmware, simulator, plugins, builder, `motioncore` CLI, engine API contract | yes |
-| [ratavyr](https://github.com/bzyfuzy/ratavyr) | Go REST/WebSocket gateway, auth, firmware job orchestration | optional |
-| [sindrava](https://github.com/bzyfuzy/sindrava) | Vite + React + Three.js dashboard | optional |
+| [ratavyr](https://github.com/bzy-logics/ratavyr) | Go REST/WebSocket gateway, auth, firmware job orchestration | optional |
+| [sindrava](https://github.com/bzy-logics/sindrava) | Vite + React + Three.js dashboard | optional |
 
 > **Status: v0.2 development.** Runs end-to-end in simulation. The STM32F411
 > and RP2040 firmware compile and are host-tested, but have **not** been

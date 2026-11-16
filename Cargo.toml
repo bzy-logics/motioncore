@@ -51,7 +51,7 @@ version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.85"
-repository = "https://github.com/bzyfuzy/motioncore"
+repository = "https://github.com/bzy-logics/motioncore"
 
 [workspace.dependencies]
 motioncore-protocol = { path = "crates/protocol" }
