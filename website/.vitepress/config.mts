@@ -113,7 +113,7 @@ export default defineConfig({
     outline: { level: [2, 3] },
 
     footer: {
-      message: 'Apache-2.0 OR MIT. Not a certified safety system — always use an independent hardware E-stop.',
+      message: 'Licensed under GPL-3.0. Not a certified safety system — always use an independent hardware E-stop.',
     },
   },
 })
