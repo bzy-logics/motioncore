@@ -1,5 +1,7 @@
 # MotionCore
 
+**Website & docs: [motioncore.bzy-logics.com](https://motioncore.bzy-logics.com)** · Gateway: [ratavyr.bzy-logics.com](https://ratavyr.bzy-logics.com) · UI: [sindrava.bzy-logics.com](https://sindrava.bzy-logics.com)
+
 A plugin-first, hardware-independent robotics motion-control system in
 **Rust**: the engine, a simulator, a firmware builder, a CLI, and MCU firmware
 for **STM32F411** and **RP2040** (PIO-timed step/dir, up to 6 axes).
