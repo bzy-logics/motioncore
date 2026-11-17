@@ -42,7 +42,7 @@ The engine returns gRPC status codes, with the precise code in the trailer `moti
 |---|---|
 | `bad_request`, `validation_failed` | `INVALID_ARGUMENT` |
 | `unknown_axis`, `not_found` | `NOT_FOUND` |
-| `not_homed`, `invalid_state` | `FAILED_PRECONDITION` |
+| `not_homed`, `invalid_state`, `collision` | `FAILED_PRECONDITION` |
 | `mcu_error` | `UNAVAILABLE` |
 | `internal` | `INTERNAL` |
 

@@ -124,11 +124,42 @@ origin = [250.0, 0.0, 0.0]    # joint origin in the parent frame, mm (default 0)
 rotation = [0.0, 0.0, 0.0]    # fixed roll, pitch, yaw in degrees (about X, Y, Z, in that order)
 axis = [0.0, 0.0, 1.0]        # rotation axis (revolute) or slide direction (prismatic); default +Z
 tip = [200.0, 0.0, 0.0]       # optional: end of this joint's link (e.g. tool flange), mm
+radius = 20.0                 # optional: link thickness, mm; enables collision checking
 ```
 
-Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Geometry describes the machine for display (and future kinematics) only: motion is still commanded one axis at a time. Requires engine API 1.1.
+Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Motion is still commanded one axis at a time. Requires engine API 1.1 (`radius`: 1.2).
 
 ![A two-link arm on a linear rail, drawn from its geometry in sindrava](/screenshots/rail-arm-viewer.png)
+
+#### Collision checking
+
+Give every axis a `radius` and the engine models each link as a capsule of that thickness. Once **every** axis is homed, each `move_to` and `jog` is checked before it starts: the moving joint is swept to its target with the others held still, and the move is refused (error `collision`) if two links would come closer than 2 mm or a link would reach the floor. A move that only increases the clearance is always allowed, so a robot that is already too close can back out. Sindrava's 3D viewer runs the same check on its preview and turns it red.
+
+Links that touch by construction (a joint and the one mounted on it, or the joints of a spherical wrist) are not compared. The model is only as good as the radii: choose them to enclose the real links, motors and cables. Before homing, positions are unknown and nothing is checked.
+
+![A preview that would fold the wrist into the base is shown in red and refused](/screenshots/dummy-arm-collision.png)
+
+#### Home-all plan
+
+`home_all` homes every axis with `[axis.homing]`, by default one at a time in profile order. A `[home_all]` plan lets axes home together:
+
+```toml
+[home_all]
+groups = [["j4", "j5", "j6"], ["j1", "j2", "j3"]]  # a group homes together; groups run in order
+start_pose = "Arm straight up with every joint at its zero mark."  # shown before homing
+```
+
+Every homeable axis must be in exactly one group. The next group starts when every axis of the current one has reached its switch; a fault, Stop or E-stop ends the plan. Because joint positions are unknown until each switch triggers, no software can check homing paths: design the groups for a known start pose (simulate the paths from it) and describe that pose in `start_pose`, which clients show before homing. Requires engine API 1.2.
+
+#### Example: a six-axis desktop arm
+
+`robot-profiles/dummy-arm-virtual.toml` simulates a six-axis desktop arm whose kinematics, joint limits and gear ratios follow Peng Zhihui's open-source [Dummy robot](https://github.com/peng-zhihui/Dummy-Robot). Its Denavit–Hartenberg table was converted to `[axis.geometry]` and checked against that robot's own forward kinematics (identical flange pose over 2000 random joint sets). The simulated home switches and steps-per-degree are assumptions for the virtual MCU; the real arm uses closed-loop CAN drivers, which MotionCore does not drive.
+
+| Rest pose (0, −73, 180, 0, 0, 0) | Working pose (35, 0, 90, 30, −50, 90) |
+|---|---|
+| ![The six-axis arm folded in its rest pose](/screenshots/dummy-arm-rest.png) | ![The six-axis arm reaching out in a working pose](/screenshots/dummy-arm-pose.png) |
+
+Its links have radii of 15–30 mm, and its home-all plan homes the wrist (j4, j5, j6) together, then the arm (j1, j2, j3) together, from the arm-straight-up power-on pose: about 14 s instead of 30 s one by one, with at least 10 mm between links on every path. Homing the arm first would fold the wrist into the base.
 
 ## Validation
 
@@ -153,6 +184,7 @@ motioncore firmware configure --config my-robot.toml
 |---|---|---|
 | `robot-profiles/single-axis-virtual.toml` | `virtual` | 1 |
 | `robot-profiles/rail-arm-virtual.toml` | `virtual` | 3: a two-link arm on a linear rail, with geometry |
+| `robot-profiles/dummy-arm-virtual.toml` | `virtual` | 6: a six-axis desktop arm, with geometry |
 | `robot-profiles/single-axis-stm32f411.toml` | `stm32f411-blackpill` | 1 |
 | `robot-profiles/six-axis-rp2040-pico.toml` | `rp2040-pico` | 6, with endstops and homing |
 

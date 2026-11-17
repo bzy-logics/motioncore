@@ -9,6 +9,7 @@ The same commands are available from the CLI, the [REST API](https://ratavyr.bzy
 | Energise drives | `motioncore enable` | `enable` | `Enable` |
 | De-energise (controlled stop first) | `motioncore disable` | `disable` | `Disable` |
 | Home an axis | `motioncore home j1` | `home` `{"axis":"j1"}` | `Home` |
+| Home every axis | `motioncore home-all` | `home_all` | `HomeAll` |
 | Relative move | `motioncore jog j1 5 [--velocity V]` | `jog` `{"axis":"j1","delta":5}` | `Jog` |
 | Absolute move | `motioncore move j1 -90 [--velocity V]` | `move_to` `{"axis":"j1","position":-90}` | `MoveTo` |
 | Controlled stop | `motioncore stop` | `stop` | `Stop` |
@@ -20,7 +21,7 @@ All values are in the axis's unit: degrees for revolute axes, millimetres for pr
 ## A typical session
 
 1. **`enable`** → state `ready`.
-2. **`home`** each axis that has homing configured. The axis searches for its endstop at the homing speed and is assigned the configured home position.
+2. **`home`** each axis that has homing configured, or **`home-all`**. The axis searches for its endstop at the homing speed and is assigned the configured home position. `home-all` follows the profile's [home-all plan](/guide/configuration#home-all-plan): axes in one group home together.
 3. **`move`** or **`jog`**. Each returns as soon as the engine accepts it; watch telemetry (`motioncore watch`) for progress. The state is `running` while the axis moves and returns to `ready`.
 4. **`stop`** to interrupt a move with controlled deceleration, or **`disable`** to stop and de-energise.
 
@@ -61,6 +62,7 @@ When the MCU reports idle, commanded positions are re-synced from the MCU step c
 | Error | Typical cause |
 |---|---|
 | `invalid_state` (409) | Robot not `ready`: still moving, disabled, faulted or E-stopped |
+| `collision` (409) | The move would make links collide or reach the floor ([collision checking](/guide/configuration#collision-checking)) |
 | `not_homed` (400) | `move` on an unhomed axis |
 | `validation_failed` (400) | Target outside soft limits, velocity above maximum, non-finite value |
 | `bad_request` (400) | `home` on an axis without `[axis.homing]` |

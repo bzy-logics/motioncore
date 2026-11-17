@@ -16,6 +16,7 @@ General rules:
 | `[robot]` | table | yes | |
 | `[mcu.<name>]` | table | yes | Exactly one MCU in this version |
 | `[[axis]]` | array of tables | yes | One per axis |
+| `[home_all]` | table | no | Home-all plan, see below |
 
 ## `[robot]`
 
@@ -87,8 +88,18 @@ Places the joint in the robot's kinematic tree (URDF convention); see [Configura
 | `rotation` | [float; 3] | no | Fixed roll, pitch, yaw in degrees. Default `[0, 0, 0]` |
 | `axis` | [float; 3] | no | Rotation axis or slide direction; non-zero, normalised. Default `[0, 0, 1]` |
 | `tip` | [float; 3] | no | End of this joint's link (e.g. tool flange), mm |
+| `radius` | float | no | Link thickness, mm; > 0. Enables [collision checking](/guide/configuration#collision-checking) |
 
-All or nothing: if one axis has `[axis.geometry]`, every axis must. All values must be finite.
+All or nothing: if one axis has `[axis.geometry]`, every axis must; likewise for `radius`. All values must be finite.
+
+## `[home_all]` (optional)
+
+How `home_all` homes the axes; see [Home-all plan](/guide/configuration#home-all-plan). Without it, axes home one at a time in profile order.
+
+| Key | Type | Required | Rules |
+|---|---|---|---|
+| `groups` | [[string]] | yes | Axes of a group home together; groups run in order. Every axis with `[axis.homing]` in exactly one group; no others |
+| `start_pose` | string | no | The pose the plan was designed for; shown before homing |
 
 ## Board pin maps
 
@@ -149,4 +160,9 @@ origin = [0.0, 0.0, 0.0]          # mm, in the parent frame
 rotation = [0.0, 0.0, 0.0]        # roll, pitch, yaw in degrees
 axis = [0.0, 0.0, 1.0]            # rotation axis / slide direction
 # tip = [200.0, 0.0, 0.0]         # end of the last link, mm
+# radius = 20.0                   # link thickness, mm; all axes or none
+
+# [home_all]                      # optional
+# groups = [["j1"], ["j2", "j3"]]
+# start_pose = "..."
 ```

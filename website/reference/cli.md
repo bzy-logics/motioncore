@@ -62,6 +62,7 @@ With `--config`, the simulator takes the axis geometry (endstop positions, etc.)
 | `motioncore estop` | Software emergency stop: drives disabled immediately, latched. Complements, never replaces, a hardware E-stop |
 | `motioncore reset-fault` | Clear a latched fault. Never resumes motion; axes must be re-homed |
 | `motioncore home AXIS` | Run the axis's homing procedure |
+| `motioncore home-all` | Home every axis, following the profile's `[home_all]` plan (one at a time without one) |
 | `motioncore jog AXIS DELTA [--velocity V]` | Relative move in axis units. Negative values allowed: `jog j1 -5` |
 | `motioncore move AXIS POSITION [--velocity V]` | Absolute move in axis units. The axis must be homed |
 
