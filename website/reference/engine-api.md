@@ -74,7 +74,7 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 
 | Field | Type | Meaning |
 |---|---|---|
-| `api_version` | string | Semantic version of this contract, e.g. `1.0.0` |
+| `api_version` | string | Semantic version of this contract, e.g. `1.1.0` |
 | `engine_version` | string | |
 | `mcu_protocol_version` | uint32 | MCU wire protocol version |
 | `plugin_api_version` | string | Host plugin API version |
@@ -116,7 +116,21 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 
 `RobotConfig`: `name`, `profile`, `axes`, `mcus`.
 `McuConfig`: `name`, `board`, `transport`, `watchdog_ms`.
-`AxisConfig`: `id`, `name`, `kind` (`JointKind`), `unit`, `min`, `max`, `max_velocity`, `max_acceleration`, optional `home_position`, `steps_per_unit`, `mcu`, `mcu_channel`, `actuator`, `step_pin`, `dir_pin`, `enable_pin`, `endstop_pin` (empty when there is no endstop).
+`AxisConfig`: `id`, `name`, `kind` (`JointKind`), `unit`, `min`, `max`, `max_velocity`, `max_acceleration`, optional `home_position`, `steps_per_unit`, `mcu`, `mcu_channel`, `actuator`, `step_pin`, `dir_pin`, `enable_pin`, `endstop_pin` (empty when there is no endstop), `geometry` (`AxisGeometry`, unset when the profile defines none; since 1.1.0).
+
+### `AxisGeometry` (since 1.1.0)
+
+URDF-style joint placement: `frame(child) = frame(parent) · Translate(origin_mm) · RPY(rotation_deg) · Joint(q about axis)`, where `frame(parent)` includes the parent's joint motion.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `parent` | string | Parent axis id; empty = mounted on the robot base |
+| `origin_mm` | `Vec3` | Joint origin in the parent frame, mm |
+| `rotation_deg` | `Vec3` | Fixed roll, pitch, yaw in degrees (about X, Y, Z, in that order) |
+| `axis` | `Vec3` | Unit rotation axis (revolute) or slide direction (prismatic) |
+| `tip_mm` | `Vec3` | End of this joint's link (e.g. tool flange), joint frame; unset if not configured |
+
+`Vec3` is `x`, `y`, `z` (double). Either every axis has geometry or none does.
 
 ### `Plugin`
 
@@ -151,6 +165,11 @@ A `oneof`: `telemetry` (`Telemetry`) or `log` (`LogEntry`: `time_ms`, `level`, `
 Each value is prefixed with the enum name in the proto, e.g. `ROBOT_STATE_READY`. A newer 1.x engine may add values; clients must handle unknown ones.
 
 ## Compatibility rules for v1
+
+| Version | Change |
+|---|---|
+| 1.0.x | Initial contract |
+| 1.1.0 | `AxisConfig.geometry` (`AxisGeometry`, `Vec3`) |
 
 - Only additive changes: new fields, messages, RPCs and enum values.
 - Field numbers are never reused; removed fields are `reserved`.

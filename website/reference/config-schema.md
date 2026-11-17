@@ -76,6 +76,20 @@ The table name (e.g. `main`) is the MCU's name, which axes refer to.
 | `position` | float | yes | Assigned at the switch; within `[min, max]` |
 | `max_travel` | float | yes | Homing fails after this much travel without a trigger |
 
+### `[axis.geometry]` (optional)
+
+Places the joint in the robot's kinematic tree (URDF convention); see [Configuration: geometry](/guide/configuration#_7-geometry-optional).
+
+| Key | Type | Required | Rules |
+|---|---|---|---|
+| `parent` | string | no | Another axis id; omitted = mounted on the robot base. No cycles |
+| `origin` | [float; 3] | no | Joint origin in the parent frame, mm. Default `[0, 0, 0]` |
+| `rotation` | [float; 3] | no | Fixed roll, pitch, yaw in degrees. Default `[0, 0, 0]` |
+| `axis` | [float; 3] | no | Rotation axis or slide direction; non-zero, normalised. Default `[0, 0, 1]` |
+| `tip` | [float; 3] | no | End of this joint's link (e.g. tool flange), mm |
+
+All or nothing: if one axis has `[axis.geometry]`, every axis must. All values must be finite.
+
 ## Board pin maps
 
 | Board | Channel → STEP / DIR / ENABLE / ENDSTOP |
@@ -128,4 +142,11 @@ direction = "negative"            # | "positive"
 speed = 30.0
 position = -170.0
 max_travel = 360.0
+
+[axis.geometry]                   # optional; all axes or none
+# parent = "j0"                   # omit for the robot base
+origin = [0.0, 0.0, 0.0]          # mm, in the parent frame
+rotation = [0.0, 0.0, 0.0]        # roll, pitch, yaw in degrees
+axis = [0.0, 0.0, 1.0]            # rotation axis / slide direction
+# tip = [200.0, 0.0, 0.0]         # end of the last link, mm
 ```
