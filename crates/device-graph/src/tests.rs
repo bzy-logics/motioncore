@@ -185,3 +185,62 @@ fn rp2040_rejects_swapped_step_and_dir() {
     assert!(v.iter().any(|i| i.path == "axis[0](a1).driver.step_pin"), "{v:?}");
     assert!(v.iter().any(|i| i.path == "axis[0](a1).driver.dir_pin"), "{v:?}");
 }
+
+const GEOMETRY: &str = "\n[axis.geometry]\norigin = [0.0, 0.0, 100.0]\naxis = [0.0, 0.0, 2.0]\n";
+
+#[test]
+fn geometry_is_optional_and_normalised() {
+    let r = parse(GOOD).unwrap();
+    assert!(r.file.axes[0].geometry.is_none());
+    let r = parse(&format!("{GOOD}{GEOMETRY}")).unwrap();
+    let g = r.file.axes[0].geometry.as_ref().unwrap();
+    assert_eq!(g.parent, None);
+    assert_eq!(g.origin, [0.0, 0.0, 100.0]);
+    assert_eq!(g.rotation, [0.0, 0.0, 0.0]);
+    assert_eq!(g.axis, [0.0, 0.0, 1.0], "axis is normalised");
+}
+
+#[test]
+fn rail_arm_profile_forms_a_tree() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../robot-profiles/rail-arm-virtual.toml");
+    let r = load(&path).unwrap();
+    let parent = |id: &str| r.axis(id).unwrap().geometry.as_ref().unwrap().parent.clone();
+    assert_eq!(parent("x"), None);
+    assert_eq!(parent("j1").as_deref(), Some("x"));
+    assert_eq!(parent("j2").as_deref(), Some("j1"));
+}
+
+fn rail_arm_with(edit: impl Fn(&str) -> String) -> Vec<Issue> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../robot-profiles/rail-arm-virtual.toml");
+    issues(&edit(&std::fs::read_to_string(path).unwrap()))
+}
+
+#[test]
+fn geometry_errors_are_reported() {
+    // Unknown parent.
+    let v = rail_arm_with(|t| t.replace("parent = \"j1\"", "parent = \"j9\""));
+    assert!(v.iter().any(|i| i.path.ends_with("geometry.parent") && i.message.contains("unknown axis 'j9'")), "{v:?}");
+    // Self parent.
+    let v = rail_arm_with(|t| t.replace("parent = \"j1\"", "parent = \"j2\""));
+    assert!(v.iter().any(|i| i.message.contains("own parent")), "{v:?}");
+    // Cycle: x -> j2 -> j1 -> x.
+    let v = rail_arm_with(|t| t.replacen("# On the robot base; slides along +X.", "parent = \"j2\"", 1));
+    assert!(v.iter().any(|i| i.message.contains("cycle")), "{v:?}");
+    // Zero axis.
+    let v = rail_arm_with(|t| t.replacen("axis = [1.0, 0.0, 0.0]", "axis = [0.0, 0.0, 0.0]", 1));
+    assert!(v.iter().any(|i| i.path.ends_with("geometry.axis")), "{v:?}");
+    // Tip must be finite.
+    let v = rail_arm_with(|t| t.replace("tip = [200.0, 0.0, 0.0]", "tip = [nan, 0.0, 0.0]"));
+    assert!(v.iter().any(|i| i.path.ends_with("geometry.tip")), "{v:?}");
+    // All or nothing.
+    let v = rail_arm_with(|t| {
+        t.replacen(
+            "[axis.geometry]\nparent = \"j1\"\norigin = [250.0, 0.0, 0.0]\naxis = [0.0, 0.0, 1.0]\n# Forearm ends at the tool flange, 200 mm out.\ntip = [200.0, 0.0, 0.0]\n",
+            "",
+            1,
+        )
+    });
+    assert!(v.iter().any(|i| i.path == "axis[2](j2).geometry" && i.message.contains("every axis")), "{v:?}");
+    // Unknown keys are rejected like everywhere else.
+    assert!(matches!(parse(&format!("{GOOD}{GEOMETRY}length = 3\n")), Err(ConfigError::Parse(_))));
+}

@@ -1,0 +1,118 @@
+# A two-link arm carried by a linear rail, on the virtual MCU (no hardware).
+# Demonstrates kinematic geometry: the arm's base joint is mounted on the
+# rail carriage, the elbow on the end of the first link.
+#
+#   x  (rail)      slides along world X
+#   j1 (shoulder)  on the carriage, 120 mm up, turns about Z
+#   j2 (elbow)     at the end of a 250 mm link, turns about Z
+schema = 1
+
+[robot]
+name = "rail-arm"
+profile = "org.motioncore.robot.single_axis"
+
+[mcu.main]
+board = "virtual"
+transport = "virtual"
+watchdog_ms = 500
+
+[[axis]]
+id = "x"
+name = "Rail"
+kind = "prismatic"
+unit = "mm"
+mcu = "main"
+channel = 0
+steps_per_unit = 80.0
+min = 0.0
+max = 600.0
+max_velocity = 150.0
+max_acceleration = 600.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP0"
+dir_pin = "DIR0"
+enable_pin = "EN0"
+
+[axis.endstop]
+pin = "ENDSTOP0"
+
+[axis.homing]
+direction = "negative"
+speed = 50.0
+position = 0.0
+max_travel = 620.0
+
+[axis.geometry]
+# On the robot base; slides along +X.
+origin = [0.0, 0.0, 0.0]
+axis = [1.0, 0.0, 0.0]
+
+[[axis]]
+id = "j1"
+name = "Shoulder"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 1
+steps_per_unit = 44.444444
+min = -150.0
+max = 150.0
+max_velocity = 90.0
+max_acceleration = 360.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP1"
+dir_pin = "DIR1"
+enable_pin = "EN1"
+
+[axis.endstop]
+pin = "ENDSTOP1"
+
+[axis.homing]
+direction = "negative"
+speed = 30.0
+position = -150.0
+max_travel = 320.0
+
+[axis.geometry]
+parent = "x"
+origin = [0.0, 0.0, 120.0]
+axis = [0.0, 0.0, 1.0]
+
+[[axis]]
+id = "j2"
+name = "Elbow"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 2
+steps_per_unit = 44.444444
+min = -140.0
+max = 140.0
+max_velocity = 90.0
+max_acceleration = 360.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP2"
+dir_pin = "DIR2"
+enable_pin = "EN2"
+
+[axis.endstop]
+pin = "ENDSTOP2"
+
+[axis.homing]
+direction = "negative"
+speed = 30.0
+position = -140.0
+max_travel = 300.0
+
+[axis.geometry]
+parent = "j1"
+origin = [250.0, 0.0, 0.0]
+axis = [0.0, 0.0, 1.0]
+# Forearm ends at the tool flange, 200 mm out.
+tip = [200.0, 0.0, 0.0]

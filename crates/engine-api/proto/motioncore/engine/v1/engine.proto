@@ -216,6 +216,35 @@ message AxisConfig {
   string enable_pin = 16;
   // Empty when the axis has no endstop.
   string endstop_pin = 17;
+  // Kinematic placement of the joint. Unset when the robot profile defines
+  // no geometry (then no axis has it). Added in 1.1.0.
+  AxisGeometry geometry = 18;
+}
+
+// A 3D vector.
+message Vec3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+// URDF-style joint placement:
+//   frame(child) = frame(parent) * Translate(origin_mm) * RPY(rotation_deg) * Joint(q about axis)
+// frame(parent) includes the parent joint's own motion; the base is the
+// robot's world frame. Prismatic joint values are in mm, revolute in deg.
+message AxisGeometry {
+  // Parent axis id; empty = mounted on the robot base.
+  string parent = 1;
+  // Joint frame origin in the parent frame, mm.
+  Vec3 origin_mm = 2;
+  // Fixed roll, pitch, yaw in degrees (about X, Y, Z of the parent frame,
+  // applied in that order).
+  Vec3 rotation_deg = 3;
+  // Unit joint axis in the joint frame: rotation axis or slide direction.
+  Vec3 axis = 4;
+  // End point of this joint's link in its joint frame, mm (e.g. the tool
+  // flange of the last joint). Unset when not configured. Display only.
+  Vec3 tip_mm = 5;
 }
 
 message ListPluginsRequest {}

@@ -578,6 +578,16 @@ impl Engine {
                     dir_pin: a.driver.dir_pin.clone(),
                     enable_pin: a.driver.enable_pin.clone(),
                     endstop_pin: a.endstop.as_ref().map(|e| e.pin.clone()).unwrap_or_default(),
+                    geometry: a.geometry.as_ref().map(|g| {
+                        let v = |x: [f64; 3]| pb::Vec3 { x: x[0], y: x[1], z: x[2] };
+                        pb::AxisGeometry {
+                            parent: g.parent.clone().unwrap_or_default(),
+                            origin_mm: Some(v(g.origin)),
+                            rotation_deg: Some(v(g.rotation)),
+                            axis: Some(v(g.axis)),
+                            tip_mm: g.tip.map(v),
+                        }
+                    }),
                 })
                 .collect(),
         }

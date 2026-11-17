@@ -68,6 +68,10 @@ target/debug/motioncore watch          # live telemetry + log
 target/debug/motioncore estop
 ```
 
+For a multi-axis machine with kinematic geometry (a two-link arm on a linear
+rail, drawn as a connected robot in the web UI), use
+`--config robot-profiles/rail-arm-virtual.toml`.
+
 The engine listens on `unix:///run/motioncore/engine.sock` on Linux and
 `tcp://127.0.0.1:7600` elsewhere (`--listen`, or `MOTIONCORE_ENGINE_ADDR` for clients).
 

@@ -121,13 +121,18 @@ fn profile(name: &str) -> std::path::PathBuf {
 }
 
 async fn start(fault_injection: bool) -> Client {
-    let path = profile("single-axis-virtual.toml");
+    start_with("single-axis-virtual.toml", fault_injection).await
+}
+
+async fn start_with(name: &str, fault_injection: bool) -> Client {
+    let path = profile(name);
     let robot = motioncore_device_graph::load(&path).unwrap();
+    let axis_ids: Vec<String> = robot.file.axes.iter().map(|a| a.id.clone()).collect();
     let mut reg = Registry::new(CORE_CAPABILITIES.iter().copied());
     for p in motioncore_builtin_plugins::all() {
         reg.add_builtin(p);
     }
-    assert!(reg.start(&PluginContext { robot_name: "t".into(), axis_ids: vec!["j1".into()] }).is_empty());
+    assert!(reg.start(&PluginContext { robot_name: "t".into(), axis_ids }).is_empty());
     let eng = engine::Engine::new(robot, reg, engine::Options { fault_injection }).unwrap();
     eng.spawn();
     let jobs = FirmwareJobs::new(None, path);
@@ -331,4 +336,31 @@ async fn firmware_service_is_restricted() {
     let e = c.firmware.start_flash(pb::StartFlashRequest { build_job_id: "build-1".into(), confirm: true }).await.unwrap_err();
     assert_eq!(error_code(&e), Some("invalid_state"));
     assert!(c.firmware.list_jobs(pb::ListJobsRequest {}).await.unwrap().into_inner().jobs.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn geometry_is_served_and_api_version_is_1_1() {
+    let mut c = start_with("rail-arm-virtual.toml", false).await;
+    let info = c.engine.get_info(pb::GetInfoRequest {}).await.unwrap().into_inner();
+    assert_eq!(info.api_version, "1.1.0");
+    let cfg = c.engine.get_robot_config(pb::GetRobotConfigRequest {}).await.unwrap().into_inner();
+    let g = |id: &str| cfg.axes.iter().find(|a| a.id == id).unwrap().geometry.clone().unwrap();
+    let rail = g("x");
+    assert_eq!(rail.parent, "");
+    let ax = rail.axis.unwrap();
+    assert_eq!((ax.x, ax.y, ax.z), (1.0, 0.0, 0.0));
+    let shoulder = g("j1");
+    assert_eq!(shoulder.parent, "x");
+    assert_eq!(shoulder.origin_mm.unwrap().z, 120.0);
+    let elbow = g("j2");
+    assert_eq!(elbow.parent, "j1");
+    assert_eq!(elbow.origin_mm.unwrap().x, 250.0);
+    assert_eq!(elbow.rotation_deg.unwrap(), pb::Vec3 { x: 0.0, y: 0.0, z: 0.0 });
+    assert_eq!(elbow.tip_mm.unwrap().x, 200.0);
+    assert!(shoulder.tip_mm.is_none());
+
+    // Profiles without geometry leave the field unset.
+    let mut plain = start(false).await;
+    let cfg = plain.engine.get_robot_config(pb::GetRobotConfigRequest {}).await.unwrap().into_inner();
+    assert!(cfg.axes.iter().all(|a| a.geometry.is_none()));
 }

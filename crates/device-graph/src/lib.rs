@@ -17,6 +17,7 @@ pub mod boards;
 
 pub use boards::{Board, ChannelPins, FlashMethod, BOARDS};
 
+
 // ---------------------------------------------------------------------------
 // Configuration file schema (TOML)
 // ---------------------------------------------------------------------------
@@ -91,6 +92,40 @@ pub struct AxisSection {
     pub driver: DriverSection,
     pub endstop: Option<EndstopSection>,
     pub homing: Option<HomingSection>,
+    /// Where the joint sits in the robot's kinematic tree (optional; if any
+    /// axis has geometry, every axis must).
+    pub geometry: Option<GeometrySection>,
+}
+
+/// Kinematic placement of one joint, URDF-style:
+///
+/// `frame(child) = frame(parent) · Translate(origin) · RPY(rotation) · Joint(q about axis)`
+///
+/// where `frame(parent)` already includes the parent's own joint motion and
+/// the base (no parent) is the robot's world frame.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GeometrySection {
+    /// Axis this joint is mounted on; omitted = the robot base.
+    pub parent: Option<String>,
+    /// Joint frame origin in the parent's frame, in mm.
+    #[serde(default)]
+    pub origin: [f64; 3],
+    /// Fixed roll, pitch, yaw (degrees, about X, Y, Z of the parent frame,
+    /// applied in that order) of the joint frame.
+    #[serde(default)]
+    pub rotation: [f64; 3],
+    /// Joint axis in the joint frame: rotation axis (revolute) or slide
+    /// direction (prismatic). Normalised by the resolver. Default +Z.
+    #[serde(default = "default_joint_axis")]
+    pub axis: [f64; 3],
+    /// End point of this joint's link in its joint frame, mm, for joints
+    /// with nothing mounted on them (e.g. the tool flange). Display only.
+    pub tip: Option<[f64; 3]>,
+}
+
+fn default_joint_axis() -> [f64; 3] {
+    [0.0, 0.0, 1.0]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,7 +256,7 @@ pub fn parse(text: &str) -> Result<ResolvedRobot, ConfigError> {
 }
 
 /// Validate a robot description against board metadata.
-pub fn resolve(file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
+pub fn resolve(mut file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
     let mut issues = Vec::new();
 
 
@@ -374,6 +409,8 @@ pub fn resolve(file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
         }
     }
 
+    check_geometry(&mut file, &mut issues);
+
     required_plugins.sort();
     required_plugins.dedup();
     required_capabilities.sort();
@@ -383,6 +420,60 @@ pub fn resolve(file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
         Ok(ResolvedRobot { file, mcus, required_capabilities, required_plugins })
     } else {
         Err(issues)
+    }
+}
+
+/// Validate the kinematic tree: all-or-nothing, known parents, no cycles,
+/// finite numbers, non-zero joint axes (normalised in place).
+fn check_geometry(file: &mut RobotFile, issues: &mut Vec<Issue>) {
+    let with = file.axes.iter().filter(|a| a.geometry.is_some()).count();
+    if with == 0 {
+        return;
+    }
+    for (i, a) in file.axes.iter().enumerate() {
+        if a.geometry.is_none() {
+            issues.push(Issue {
+                path: format!("axis[{i}]({}).geometry", a.id),
+                message: "missing: when one axis has geometry, every axis needs it".into(),
+            });
+        }
+    }
+    let ids: HashSet<String> = file.axes.iter().map(|a| a.id.clone()).collect();
+    let parent_of: HashMap<String, Option<String>> =
+        file.axes.iter().filter_map(|a| a.geometry.as_ref().map(|g| (a.id.clone(), g.parent.clone()))).collect();
+    for (i, a) in file.axes.iter_mut().enumerate() {
+        let Some(g) = a.geometry.as_mut() else { continue };
+        let p = format!("axis[{i}]({}).geometry", a.id);
+        if let Some(parent) = &g.parent {
+            if parent == &a.id {
+                issues.push(Issue { path: format!("{p}.parent"), message: "an axis cannot be its own parent".into() });
+            } else if !ids.contains(parent) {
+                issues.push(Issue { path: format!("{p}.parent"), message: format!("unknown axis '{parent}'") });
+            } else {
+                // Walk up; a chain longer than the axis count is a cycle.
+                let mut cur = Some(parent.clone());
+                let mut steps = 0;
+                while let Some(c) = cur {
+                    if c == a.id || steps > ids.len() {
+                        issues.push(Issue { path: format!("{p}.parent"), message: "parent chain forms a cycle".into() });
+                        break;
+                    }
+                    cur = parent_of.get(&c).cloned().flatten();
+                    steps += 1;
+                }
+            }
+        }
+        for (field, v) in [("origin", g.origin), ("rotation", g.rotation), ("axis", g.axis), ("tip", g.tip.unwrap_or_default())] {
+            if !v.iter().all(|x| x.is_finite()) {
+                issues.push(Issue { path: format!("{p}.{field}"), message: "must contain finite numbers".into() });
+            }
+        }
+        let n = (g.axis[0] * g.axis[0] + g.axis[1] * g.axis[1] + g.axis[2] * g.axis[2]).sqrt();
+        if n.is_finite() && n > 1e-9 {
+            g.axis = [g.axis[0] / n, g.axis[1] / n, g.axis[2] / n];
+        } else {
+            issues.push(Issue { path: format!("{p}.axis"), message: "must be a non-zero vector".into() });
+        }
     }
 }
 
