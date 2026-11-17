@@ -103,6 +103,9 @@ impl EngineService for EngineSvc {
     async fn home(&self, r: Request<pb::HomeRequest>) -> Res<pb::CommandResponse> {
         done(self.engine.home(&r.into_inner().axis).await)
     }
+    async fn home_all(&self, _: Request<pb::HomeAllRequest>) -> Res<pb::CommandResponse> {
+        done(self.engine.home_all().await)
+    }
     async fn stop(&self, _: Request<pb::StopRequest>) -> Res<pb::CommandResponse> {
         done(self.engine.stop().await)
     }

@@ -89,6 +89,8 @@ enum Cmd {
     Home {
         axis: String,
     },
+    /// Home every axis, following the profile's home-all plan.
+    HomeAll,
     /// MCU discovery.
     Mcu {
         #[command(subcommand)]
@@ -222,6 +224,7 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Jog { axis, delta, velocity } => client::command(&addr, |mut c| async move { c.engine.jog(pb::JogRequest { axis, delta, velocity }).await }).await,
         Cmd::Move { axis, position, velocity } => client::command(&addr, |mut c| async move { c.engine.move_to(pb::MoveToRequest { axis, position, velocity }).await }).await,
         Cmd::Home { axis } => client::command(&addr, |mut c| async move { c.engine.home(pb::HomeRequest { axis }).await }).await,
+        Cmd::HomeAll => client::command(&addr, |mut c| async move { c.engine.home_all(pb::HomeAllRequest {}).await }).await,
         Cmd::Mcu { cmd: McuCmd::List } => {
             let ports = builder::list_ports()?;
             if ports.is_empty() {

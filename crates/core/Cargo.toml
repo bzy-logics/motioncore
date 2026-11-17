@@ -11,6 +11,7 @@ motioncore-engine-api = { workspace = true }
 motioncore-safety = { workspace = true }
 motioncore-motion = { workspace = true }
 motioncore-device-graph = { workspace = true }
+motioncore-kinematics = { workspace = true }
 motioncore-plugin-runtime = { workspace = true }
 motioncore-mcu-manager = { workspace = true }
 motioncore-simulator = { workspace = true }

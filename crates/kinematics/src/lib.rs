@@ -8,6 +8,8 @@
 //! Kinematics output is a *proposal*: the motion engine still validates every
 //! joint target against limits before anything moves.
 
+pub mod collision;
+
 use thiserror::Error;
 
 /// Task-space pose. For joint-space robots this is simply the joint vector;

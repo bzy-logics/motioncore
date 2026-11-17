@@ -70,7 +70,12 @@ target/debug/motioncore estop
 
 For a multi-axis machine with kinematic geometry (a two-link arm on a linear
 rail, drawn as a connected robot in the web UI), use
-`--config robot-profiles/rail-arm-virtual.toml`.
+`--config robot-profiles/rail-arm-virtual.toml`, or
+`robot-profiles/dummy-arm-virtual.toml` for a simulated six-axis desktop arm.
+The six-axis profile also gives its links a thickness, so once homed the
+engine refuses moves that would make the arm collide with itself, and a
+home-all plan (`motioncore home-all`) that homes the wrist joints together,
+then the arm joints together.
 
 The engine listens on `unix:///run/motioncore/engine.sock` on Linux and
 `tcp://127.0.0.1:7600` elsewhere (`--listen`, or `MOTIONCORE_ENGINE_ADDR` for clients).

@@ -31,6 +31,20 @@ pub struct RobotFile {
     pub mcu: BTreeMap<String, McuSection>,
     #[serde(rename = "axis")]
     pub axes: Vec<AxisSection>,
+    /// How "home all" proceeds (optional). Without it every homeable axis is
+    /// homed on its own, in profile order.
+    pub home_all: Option<HomeAllSection>,
+}
+
+/// Home-all plan: the axes of one group home at the same time, groups run in
+/// order. The plan is only as safe as its design: before homing, joint
+/// positions are unknown, so the engine cannot check the paths. `start_pose`
+/// tells the operator what pose the robot must be in first.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HomeAllSection {
+    pub groups: Vec<Vec<String>>,
+    pub start_pose: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,8 +134,12 @@ pub struct GeometrySection {
     #[serde(default = "default_joint_axis")]
     pub axis: [f64; 3],
     /// End point of this joint's link in its joint frame, mm, for joints
-    /// with nothing mounted on them (e.g. the tool flange). Display only.
+    /// with nothing mounted on them (e.g. the tool flange).
     pub tip: Option<[f64; 3]>,
+    /// Radius of this joint's link (capsules from the joint to its children
+    /// and tip), mm. When every axis has one, the engine checks moves for
+    /// self-collision and floor contact.
+    pub radius: Option<f64>,
 }
 
 fn default_joint_axis() -> [f64; 3] {
@@ -410,6 +428,7 @@ pub fn resolve(mut file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
     }
 
     check_geometry(&mut file, &mut issues);
+    check_home_all(&file, &mut issues);
 
     required_plugins.sort();
     required_plugins.dedup();
@@ -463,6 +482,11 @@ fn check_geometry(file: &mut RobotFile, issues: &mut Vec<Issue>) {
                 }
             }
         }
+        if let Some(r) = g.radius {
+            if !(r.is_finite() && r > 0.0) {
+                issues.push(Issue { path: format!("{p}.radius"), message: "must be a positive number (mm)".into() });
+            }
+        }
         for (field, v) in [("origin", g.origin), ("rotation", g.rotation), ("axis", g.axis), ("tip", g.tip.unwrap_or_default())] {
             if !v.iter().all(|x| x.is_finite()) {
                 issues.push(Issue { path: format!("{p}.{field}"), message: "must contain finite numbers".into() });
@@ -477,7 +501,64 @@ fn check_geometry(file: &mut RobotFile, issues: &mut Vec<Issue>) {
     }
 }
 
+/// Validate the home-all plan: known, homeable axes, each exactly once, and
+/// every homeable axis covered.
+fn check_home_all(file: &RobotFile, issues: &mut Vec<Issue>) {
+    let with_radius = file.axes.iter().filter(|a| a.geometry.as_ref().is_some_and(|g| g.radius.is_some())).count();
+    if with_radius > 0 && with_radius < file.axes.len() {
+        for (i, a) in file.axes.iter().enumerate() {
+            if !a.geometry.as_ref().is_some_and(|g| g.radius.is_some()) {
+                issues.push(Issue {
+                    path: format!("axis[{i}]({}).geometry.radius", a.id),
+                    message: "missing: when one axis has a link radius, every axis needs one".into(),
+                });
+            }
+        }
+    }
+    let Some(plan) = &file.home_all else { return };
+    let mut seen = HashSet::new();
+    for (gi, group) in plan.groups.iter().enumerate() {
+        let gp = format!("home_all.groups[{gi}]");
+        if group.is_empty() {
+            issues.push(Issue { path: gp.clone(), message: "empty group".into() });
+        }
+        for id in group {
+            match file.axes.iter().find(|a| &a.id == id) {
+                None => issues.push(Issue { path: gp.clone(), message: format!("unknown axis '{id}'") }),
+                Some(a) if a.homing.is_none() => {
+                    issues.push(Issue { path: gp.clone(), message: format!("axis '{id}' has no [axis.homing]") })
+                }
+                Some(_) => {}
+            }
+            if !seen.insert(id.clone()) {
+                issues.push(Issue { path: gp.clone(), message: format!("axis '{id}' appears more than once") });
+            }
+        }
+    }
+    for a in file.axes.iter().filter(|a| a.homing.is_some()) {
+        if !seen.contains(&a.id) {
+            issues.push(Issue { path: "home_all.groups".into(), message: format!("homeable axis '{}' is in no group", a.id) });
+        }
+    }
+}
+
 impl ResolvedRobot {
+    /// The home-all plan as groups of axis indices: the profile's
+    /// `[home_all]` groups, or one group per homeable axis in profile order.
+    pub fn home_all_plan(&self) -> Vec<Vec<usize>> {
+        let index = |id: &str| self.file.axes.iter().position(|a| a.id == id);
+        match &self.file.home_all {
+            Some(plan) => plan.groups.iter().map(|g| g.iter().filter_map(|id| index(id)).collect()).collect(),
+            None => (0..self.file.axes.len()).filter(|&i| self.file.axes[i].homing.is_some()).map(|i| vec![i]).collect(),
+        }
+    }
+
+    /// True when every axis has geometry with a link radius, i.e. the
+    /// engine can check moves for self-collision.
+    pub fn has_collision_model(&self) -> bool {
+        !self.file.axes.is_empty() && self.file.axes.iter().all(|a| a.geometry.as_ref().is_some_and(|g| g.radius.is_some()))
+    }
+
     pub fn axis(&self, id: &str) -> Option<&AxisSection> {
         self.file.axes.iter().find(|a| a.id == id)
     }

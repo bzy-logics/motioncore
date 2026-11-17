@@ -5,11 +5,12 @@
 //! check state/ownership → resolve geometry → plan → validate → convert to
 //! timestamped MCU segments → queue → observe feedback.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use motioncore_device_graph::{AxisSection, Direction, JointKind, ResolvedMcu, ResolvedRobot, Transport, Unit};
+use motioncore_kinematics::collision::{CollisionModel, JointSpec};
 use motioncore_mcu_manager::{McuError, McuEvent, McuLink};
 use motioncore_motion::{plan_axis_move, to_segments, AxisLimits, MotionError};
 use motioncore_engine_api::v1 as pb;
@@ -61,7 +62,21 @@ struct Inner {
     /// Bumped whenever planned motion is discarded (stop, fault, e-stop).
     motion_gen: u64,
     telemetry_seq: u64,
+    /// Homing in progress (Home = one group of one axis, HomeAll = the plan).
+    homing: Option<HomingRun>,
 }
+
+/// A homing run: the axes of one group home at the same time, groups in order.
+struct HomingRun {
+    groups: Vec<Vec<usize>>,
+    /// Index of the next group to start.
+    next: usize,
+    /// Axes of the current group still homing.
+    pending: BTreeSet<usize>,
+}
+
+/// Required surface clearance for the collision check, mm.
+const COLLISION_MARGIN_MM: f64 = 2.0;
 
 pub struct Engine {
     robot: ResolvedRobot,
@@ -72,6 +87,55 @@ pub struct Engine {
     started: Instant,
     logs: broadcast::Sender<pb::LogEntry>,
     telemetry: broadcast::Sender<Arc<pb::Telemetry>>,
+    /// Capsule model (when every axis has a link radius) and the axis index
+    /// of each model joint (the model lists parents first).
+    collision: Option<(CollisionModel, Vec<usize>)>,
+}
+
+/// Build the collision model from the profile geometry, parents first.
+fn collision_model(robot: &ResolvedRobot) -> Option<(CollisionModel, Vec<usize>)> {
+    if !robot.has_collision_model() {
+        return None;
+    }
+    let axes = &robot.file.axes;
+    let mut order: Vec<usize> = Vec::with_capacity(axes.len());
+    while order.len() < axes.len() {
+        let before = order.len();
+        for (i, a) in axes.iter().enumerate() {
+            if order.contains(&i) {
+                continue;
+            }
+            let g = a.geometry.as_ref()?;
+            let parent_ok = match &g.parent {
+                None => true,
+                Some(p) => order.iter().any(|&o| &axes[o].id == p),
+            };
+            if parent_ok {
+                order.push(i);
+            }
+        }
+        if order.len() == before {
+            return None; // validated away by the resolver; be defensive
+        }
+    }
+    let joints = order
+        .iter()
+        .map(|&i| {
+            let a = &axes[i];
+            let g = a.geometry.as_ref().unwrap();
+            JointSpec {
+                id: a.id.clone(),
+                parent: g.parent.as_ref().and_then(|p| order.iter().position(|&o| &axes[o].id == p)),
+                origin: g.origin,
+                rotation_deg: g.rotation,
+                axis: g.axis,
+                tip: g.tip,
+                radius: g.radius.unwrap_or(0.0),
+                prismatic: a.kind == JointKind::Prismatic,
+            }
+        })
+        .collect();
+    Some((CollisionModel::new(joints, COLLISION_MARGIN_MM), order))
 }
 
 impl Engine {
@@ -91,6 +155,7 @@ impl Engine {
             .iter()
             .map(|a| AxisRt { cfg: a.clone(), homed: false, enabled: false, commanded: 0.0 })
             .collect();
+        let collision = collision_model(&robot);
         Ok(Arc::new(Self {
             robot,
             mcu,
@@ -106,7 +171,9 @@ impl Engine {
                 last_end_us: 0,
                 motion_gen: 0,
                 telemetry_seq: 0,
+                homing: None,
             }),
+            collision,
             plugins: Mutex::new(plugins),
             started: Instant::now(),
             logs: broadcast::channel(256).0,
@@ -326,9 +393,26 @@ impl Engine {
                     a.commanded = position_steps as f64 / a.cfg.steps_per_unit;
                     let id = a.cfg.id.clone();
                     let pos = a.commanded;
-                    let _ = g.sup.apply(Event::HomingComplete);
+                    let group_done = match g.homing.as_mut() {
+                        Some(run) => {
+                            run.pending.remove(&i);
+                            run.pending.is_empty()
+                        }
+                        None => true,
+                    };
+                    let more = g.homing.as_ref().is_some_and(|r| r.next < r.groups.len());
+                    if group_done && !more {
+                        g.homing = None;
+                        let _ = g.sup.apply(Event::HomingComplete);
+                    }
                     drop(g);
                     self.log("info", format!("axis {id} homed at {pos:.3}"));
+                    if group_done && more {
+                        let this = self.clone();
+                        tokio::spawn(async move {
+                            let _ = this.start_homing_group().await;
+                        });
+                    }
                 }
                 McuEvent::LinkLost { reason } => {
                     self.log("error", format!("MCU link lost: {reason}"));
@@ -350,6 +434,7 @@ impl Engine {
     fn fault(&self, f: Fault) {
         let mut g = self.inner.lock().unwrap();
         clear_motion(&mut g);
+        g.homing = None;
         for a in g.axes.iter_mut() {
             a.homed = false;
             a.enabled = false;
@@ -495,10 +580,12 @@ impl Engine {
         if let Some(s) = &status {
             mcu.queue_depth = s.queue_depth as u32;
         }
+        let homing_axes: BTreeSet<usize> = g.homing.as_ref().map(|r| r.pending.clone()).unwrap_or_default();
         let axes = g
             .axes
             .iter()
-            .map(|a| {
+            .enumerate()
+            .map(|(i, a)| {
                 let st = status.as_ref().and_then(|s| s.axes.get(a.cfg.channel as usize));
                 let spu = a.cfg.steps_per_unit;
                 pb::AxisTelemetry {
@@ -509,6 +596,7 @@ impl Engine {
                     measured_position: st.map(|s| s.position_steps as f64 / spu).unwrap_or(a.commanded),
                     velocity: st.map(|s| s.velocity as f64 / spu).unwrap_or(0.0),
                     endstop: st.map(|s| s.endstop).unwrap_or(false),
+                    homing: homing_axes.contains(&i),
                 }
             })
             .collect();
@@ -586,10 +674,22 @@ impl Engine {
                             rotation_deg: Some(v(g.rotation)),
                             axis: Some(v(g.axis)),
                             tip_mm: g.tip.map(v),
+                            radius_mm: g.radius,
                         }
                     }),
                 })
                 .collect(),
+            home_all: Some(pb::HomeAllPlan {
+                groups: self
+                    .robot
+                    .home_all_plan()
+                    .into_iter()
+                    .map(|grp| pb::HomeAllGroup { axes: grp.into_iter().map(|i| f.axes[i].id.clone()).collect() })
+                    .collect(),
+                start_pose: f.home_all.as_ref().and_then(|h| h.start_pose.clone()).unwrap_or_default(),
+                from_profile: f.home_all.is_some(),
+            }),
+            collision_checking: self.collision.is_some(),
         }
     }
 
@@ -726,6 +826,21 @@ impl Engine {
             limits.max_velocity = cap;
             velocity = Some(velocity.unwrap_or(cap).min(cap));
         }
+        // Self-collision check: only meaningful once every position is known.
+        if let Some((model, order)) = &self.collision {
+            if g.axes.iter().all(|x| x.homed) {
+                let q: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
+                let mi = order.iter().position(|&k| k == i).expect("every axis is in the model");
+                let to = if absolute { target } else { target.clamp(cfg.min, cfg.max) };
+                if let Err(c) = model.check_sweep(&q, mi, to) {
+                    let at = c.at[mi];
+                    return Err(ApiError::new(
+                        "collision",
+                        format!("refused: {c} when {} reaches {at:.1} {}", cfg.id, if a.cfg.kind == JointKind::Prismatic { "mm" } else { "deg" }),
+                    ));
+                }
+            }
+        }
         let profile = plan_axis_move(a.commanded, target, velocity, &limits).map_err(motion_err)?;
         if profile.duration() == 0.0 {
             return Ok(());
@@ -744,28 +859,73 @@ impl Engine {
 
     pub async fn home(&self, axis: &str) -> Result<(), ApiError> {
         let i = self.axis_index(axis)?;
-        self.require(&Event::StartHoming)?;
         let a = &self.robot.file.axes[i];
-        let h = a.homing.as_ref().ok_or_else(|| ApiError::bad_request(format!("axis {} has no homing configuration", a.id)))?;
-        let spu = a.steps_per_unit;
-        let params = HomeParams {
-            axis: a.channel,
-            positive: h.direction == Direction::Positive,
-            speed: (h.speed * spu) as f32,
-            max_travel_steps: (h.max_travel * spu).ceil() as u32,
-            home_steps: (h.position * spu).round() as i32,
-        };
-        let link = self.link()?;
+        if a.homing.is_none() {
+            return Err(ApiError::bad_request(format!("axis {} has no homing configuration", a.id)));
+        }
+        self.start_homing(vec![vec![i]]).await
+    }
+
+    /// Run the home-all plan: each group's axes home at the same time.
+    pub async fn home_all(&self) -> Result<(), ApiError> {
+        let plan: Vec<Vec<usize>> = self.robot.home_all_plan().into_iter().filter(|g| !g.is_empty()).collect();
+        if plan.is_empty() {
+            return Err(ApiError::bad_request("no axis has a homing configuration"));
+        }
+        let desc: Vec<String> = plan
+            .iter()
+            .map(|g| g.iter().map(|&i| self.robot.file.axes[i].id.as_str()).collect::<Vec<_>>().join("+"))
+            .collect();
+        self.log("info", format!("home all: {}", desc.join(" -> ")));
+        self.start_homing(plan).await
+    }
+
+    async fn start_homing(&self, groups: Vec<Vec<usize>>) -> Result<(), ApiError> {
+        self.require(&Event::StartHoming)?;
+        self.link()?;
         {
             let mut g = self.inner.lock().unwrap();
             g.sup.apply(Event::StartHoming).map_err(|e| ApiError::invalid_state(e.to_string()))?;
-            g.axes[i].homed = false;
+            g.homing = Some(HomingRun { groups, next: 0, pending: BTreeSet::new() });
         }
-        if let Err(e) = link.command(HostMsg::Home(params)).await {
-            self.fault(Fault::new(FaultCode::HomingFailed, format!("homing rejected: {e}")).on_axis(a.id.clone()));
-            return Err(ApiError::mcu(e));
+        self.start_homing_group().await
+    }
+
+    /// Start every axis of the next group of the current homing run.
+    async fn start_homing_group(&self) -> Result<(), ApiError> {
+        let (group, link) = {
+            let mut g = self.inner.lock().unwrap();
+            if g.sup.state() != RobotState::Homing {
+                return Ok(()); // stopped or faulted meanwhile
+            }
+            let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+            let Some(run) = g.homing.as_mut() else { return Ok(()) };
+            let Some(group) = run.groups.get(run.next).cloned() else { return Ok(()) };
+            run.next += 1;
+            run.pending = group.iter().copied().collect();
+            for &i in &group {
+                g.axes[i].homed = false;
+            }
+            (group, link)
+        };
+        for &i in &group {
+            let a = &self.robot.file.axes[i];
+            let h = a.homing.as_ref().expect("plan holds homeable axes only");
+            let spu = a.steps_per_unit;
+            let params = HomeParams {
+                axis: a.channel,
+                positive: h.direction == Direction::Positive,
+                speed: (h.speed * spu) as f32,
+                max_travel_steps: (h.max_travel * spu).ceil() as u32,
+                home_steps: (h.position * spu).round() as i32,
+            };
+            if let Err(e) = link.command(HostMsg::Home(params)).await {
+                self.fault(Fault::new(FaultCode::HomingFailed, format!("homing rejected: {e}")).on_axis(a.id.clone()));
+                return Err(ApiError::mcu(e));
+            }
         }
-        self.log("info", format!("homing axis {}", a.id));
+        let ids: Vec<&str> = group.iter().map(|&i| self.robot.file.axes[i].id.as_str()).collect();
+        self.log("info", format!("homing {}", ids.join(", ")));
         Ok(())
     }
 
@@ -774,6 +934,7 @@ impl Engine {
         let ack = {
             let mut g = self.inner.lock().unwrap();
             clear_motion(&mut g);
+            g.homing = None;
             if g.sup.state() == RobotState::Homing {
                 // A stopped homing cycle leaves the axis un-homed; the
                 // supervisor returns to ready once the MCU is idle.

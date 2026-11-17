@@ -1,0 +1,260 @@
+# Six-axis desktop arm, simulated on the virtual MCU (no hardware).
+#
+# Kinematics, joint limits and gear ratios follow Peng Zhihui's open-source
+# Dummy robot arm (github.com/peng-zhihui/Dummy-Robot, firmware
+# Core-STM32F4-fw: 6dof_kinematic.cpp and dummy_robot.cpp). Its DH table
+# was converted to [axis.geometry] and checked against that firmware's own
+# forward kinematics (identical flange pose over 2000 random joint sets).
+#
+#   link lengths (mm): base 109 up / 35 forward, upper arm 146,
+#                      elbow offset 52, forearm 115, wrist to flange 72
+#   joint angles are the Dummy's own (deg); rest pose = (0, -73, 180, 0, 0, 0)
+#
+# Simulation assumptions (not taken from the Dummy):
+# * steps_per_unit = 200 steps x 16 microsteps x gear ratio / 360. The real
+#   arm uses closed-loop CAN stepper drivers, which MotionCore does not drive.
+# * The real arm has no endstops (it calibrates to a fixed pose). Here each
+#   joint gets a simulated home switch at one end of its travel:
+#   j1 -170, j2 -73, j3 +180, j4 -180, j5 +120, j6 -720.
+# * Link radii (collision model) are estimates of the arm's link thickness:
+#   base 30, upper arm 22, forearm 20, wrist 18, flange 15 mm.
+#
+# Home all ([home_all] below) homes the wrist first (j4 j5 j6 together, while
+# the arm still stands upright and the wrist has room), then the arm (j1 j2 j3
+# together). Simulated with the homing speeds, link surfaces never come closer
+# than 10.5 mm, in 14 s. Homing the arm first instead makes the wrist hit the
+# upper arm. Before homing, joint positions are unknown, so no software can
+# check these paths: start from the pose in `start_pose`.
+#
+# After homing, the engine checks every joint move against this collision
+# model and refuses moves that would make the arm hit itself or the floor.
+# * Velocities are chosen for the virtual MCU's 50 kHz step limit.
+#
+# Joints are commanded one at a time: MotionCore has no coordinated
+# multi-axis moves yet.
+schema = 1
+
+[robot]
+name = "dummy-arm"
+profile = "org.motioncore.robot.single_axis"
+
+[mcu.main]
+board = "virtual"
+transport = "virtual"
+watchdog_ms = 500
+
+[home_all]
+groups = [["j4", "j5", "j6"], ["j1", "j2", "j3"]]
+start_pose = "Arm straight up with every joint at its zero mark (the simulator's power-on pose)."
+
+# ---------------------------------------------------------------- J1 base yaw (ratio 50)
+[[axis]]
+id = "j1"
+name = "Base"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 0
+steps_per_unit = 444.444444
+min = -170.0
+max = 170.0
+max_velocity = 60.0
+max_acceleration = 150.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP0"
+dir_pin = "DIR0"
+enable_pin = "EN0"
+
+[axis.endstop]
+pin = "ENDSTOP0"
+
+[axis.homing]
+direction = "negative"
+speed = 30.0
+position = -170.0
+max_travel = 360.0
+
+[axis.geometry]
+axis = [0.0, 0.0, 1.0]
+radius = 30.0
+
+# ---------------------------------------------------------------- J2 shoulder (ratio 30)
+[[axis]]
+id = "j2"
+name = "Shoulder"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 1
+steps_per_unit = 266.666667
+min = -73.0
+max = 90.0
+max_velocity = 60.0
+max_acceleration = 100.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP1"
+dir_pin = "DIR1"
+enable_pin = "EN1"
+
+[axis.endstop]
+pin = "ENDSTOP1"
+
+[axis.homing]
+direction = "negative"
+speed = 30.0
+position = -73.0
+max_travel = 180.0
+
+[axis.geometry]
+parent = "j1"
+origin = [35.0, 0.0, 109.0]
+rotation = [0.0, -90.0, -90.0]
+axis = [0.0, 0.0, 1.0]
+radius = 22.0
+
+# ---------------------------------------------------------------- J3 elbow (ratio 30)
+[[axis]]
+id = "j3"
+name = "Elbow"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 2
+steps_per_unit = 266.666667
+min = 35.0
+max = 180.0
+max_velocity = 60.0
+max_acceleration = 200.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP2"
+dir_pin = "DIR2"
+enable_pin = "EN2"
+
+[axis.endstop]
+pin = "ENDSTOP2"
+
+[axis.homing]
+direction = "positive"
+speed = 30.0
+position = 180.0
+max_travel = 200.0
+
+[axis.geometry]
+parent = "j2"
+origin = [146.0, 0.0, 0.0]
+rotation = [0.0, 0.0, 90.0]
+axis = [0.0, 0.0, 1.0]
+radius = 20.0
+
+# ---------------------------------------------------------------- J4 forearm roll (ratio 24)
+[[axis]]
+id = "j4"
+name = "Forearm roll"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 3
+steps_per_unit = 213.333333
+min = -180.0
+max = 180.0
+max_velocity = 60.0
+max_acceleration = 200.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP3"
+dir_pin = "DIR3"
+enable_pin = "EN3"
+
+[axis.endstop]
+pin = "ENDSTOP3"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -180.0
+max_travel = 380.0
+
+[axis.geometry]
+parent = "j3"
+origin = [-52.0, -115.0, 0.0]
+rotation = [90.0, 0.0, 0.0]
+axis = [0.0, 0.0, 1.0]
+radius = 18.0
+
+# ---------------------------------------------------------------- J5 wrist pitch (ratio 30)
+[[axis]]
+id = "j5"
+name = "Wrist pitch"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 4
+steps_per_unit = 266.666667
+min = -120.0
+max = 120.0
+max_velocity = 60.0
+max_acceleration = 200.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP4"
+dir_pin = "DIR4"
+enable_pin = "EN4"
+
+[axis.endstop]
+pin = "ENDSTOP4"
+
+[axis.homing]
+direction = "positive"
+speed = 30.0
+position = 120.0
+max_travel = 260.0
+
+[axis.geometry]
+parent = "j4"
+rotation = [-90.0, 0.0, 0.0]
+axis = [0.0, 0.0, 1.0]
+radius = 18.0
+
+# ---------------------------------------------------------------- J6 flange roll (ratio 50)
+[[axis]]
+id = "j6"
+name = "Flange roll"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 5
+steps_per_unit = 444.444444
+min = -720.0
+max = 720.0
+max_velocity = 90.0
+max_acceleration = 200.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "STEP5"
+dir_pin = "DIR5"
+enable_pin = "EN5"
+
+[axis.endstop]
+pin = "ENDSTOP5"
+
+[axis.homing]
+direction = "negative"
+speed = 90.0
+position = -720.0
+max_travel = 1500.0
+
+[axis.geometry]
+parent = "j5"
+rotation = [90.0, 0.0, 0.0]
+axis = [0.0, 0.0, 1.0]
+radius = 15.0
+tip = [0.0, 0.0, 72.0]

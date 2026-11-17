@@ -12,7 +12,7 @@ pub mod v1 {
 
 /// Semantic version of the contract in this crate. Bump on every change:
 /// minor for additive changes, major (with a new proto package) for breaking ones.
-pub const API_VERSION: &str = "1.1.0";
+pub const API_VERSION: &str = "1.2.0";
 
 /// Trailing-metadata key carrying the precise MotionCore error code.
 pub const ERROR_CODE_METADATA: &str = "motioncore-error-code";

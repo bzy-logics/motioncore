@@ -67,6 +67,7 @@ origin = [250.0, 0.0, 0.0]    # joint origin in the parent frame, mm (default 0)
 rotation = [0.0, 0.0, 0.0]    # fixed roll, pitch, yaw in deg (about X, Y, Z, in that order; default 0)
 axis = [0.0, 0.0, 1.0]        # rotation axis (revolute) or slide direction (prismatic); default +Z
 tip = [200.0, 0.0, 0.0]       # optional: end of this joint's link (e.g. tool flange), in its joint frame, mm
+radius = 20.0                 # optional: link thickness, mm; enables collision checking (see below)
 ```
 
 A link is drawn from each joint to the origins of the joints mounted on it.
@@ -78,8 +79,50 @@ Rules checked by the resolver:
 * All or nothing: if one axis has geometry, every axis must.
 * `parent` must name another axis; chains may not form a cycle.
 * All numbers finite; `axis` must be non-zero (it is normalised).
+* `radius`, when given, is positive, and all or nothing: every axis or none.
 
-Geometry only describes the machine for display and future kinematics.
-Motion is still commanded per axis; it does not enable coordinated
-multi-axis moves. See `robot-profiles/rail-arm-virtual.toml` for a complete
-example: a two-link arm on a linear rail.
+Motion is still commanded per axis; geometry does not enable coordinated
+multi-axis moves. See `robot-profiles/rail-arm-virtual.toml` (a two-link arm
+on a linear rail) and `robot-profiles/dummy-arm-virtual.toml` (a six-axis
+arm with link radii and a home-all plan) for complete examples.
+
+### Collision checking
+
+With a `radius` on every axis, the engine models each link as capsules of
+that radius: from the joint to the joints mounted on it, and to its `tip`.
+Once **every** axis is homed, it checks each `move_to` and `jog` before
+starting it: the moving joint is swept from its current to its target
+position (0.5° or 1 mm steps) with the other joints held still, and the move
+is refused with error `collision` when two links would come closer than
+2 mm, or a link (other than one standing on the base) would reach the floor
+(z = 0). A move that only increases the clearance is always allowed, so a
+robot already too close can back out.
+
+Links that touch by construction are not compared: a joint and the joint
+mounted on it, and joints connected only through zero-length links (such as
+the three joints of a spherical wrist). The model is the profile's
+description, not a measurement of the machine: choose radii that enclose the
+real links, motors and cables. Before homing, joint positions are unknown and
+nothing is checked; see the home-all plan below.
+
+## Home-all plan (optional)
+
+`home_all` homes every axis that has `[axis.homing]`. Without a plan, axes
+home one at a time in profile order. A plan lets several axes home at the
+same time:
+
+```toml
+[home_all]
+groups = [["j4", "j5", "j6"], ["j1", "j2", "j3"]]   # axes of a group home together; groups run in order
+start_pose = "Arm straight up with every joint at its zero mark."  # optional, shown before homing
+```
+
+* Every group names known axes with `[axis.homing]`; no axis appears twice,
+  and every homeable axis is in exactly one group.
+* The next group starts only when every axis of the current one reached its
+  switch. A fault, Stop or E-stop ends the plan.
+
+Joint positions are unknown until each axis reaches its switch, so the
+engine cannot check homing paths for collisions. Choose the groups for a
+known start pose (simulate or measure the paths from it) and describe that
+pose in `start_pose`; clients show it before homing starts.

@@ -339,10 +339,10 @@ async fn firmware_service_is_restricted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn geometry_is_served_and_api_version_is_1_1() {
+async fn geometry_is_served_and_api_version_is_1_2() {
     let mut c = start_with("rail-arm-virtual.toml", false).await;
     let info = c.engine.get_info(pb::GetInfoRequest {}).await.unwrap().into_inner();
-    assert_eq!(info.api_version, "1.1.0");
+    assert_eq!(info.api_version, "1.2.0");
     let cfg = c.engine.get_robot_config(pb::GetRobotConfigRequest {}).await.unwrap().into_inner();
     let g = |id: &str| cfg.axes.iter().find(|a| a.id == id).unwrap().geometry.clone().unwrap();
     let rail = g("x");
@@ -363,4 +363,53 @@ async fn geometry_is_served_and_api_version_is_1_1() {
     let mut plain = start(false).await;
     let cfg = plain.engine.get_robot_config(pb::GetRobotConfigRequest {}).await.unwrap().into_inner();
     assert!(cfg.axes.iter().all(|a| a.geometry.is_none()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn home_all_runs_groups_together_and_collisions_are_refused() {
+    let mut c = start_with("dummy-arm-virtual.toml", false).await;
+    let cfg = c.engine.get_robot_config(pb::GetRobotConfigRequest {}).await.unwrap().into_inner();
+    assert!(cfg.collision_checking);
+    let plan = cfg.home_all.unwrap();
+    assert!(plan.from_profile);
+    let groups: Vec<Vec<String>> = plan.groups.iter().map(|g| g.axes.clone()).collect();
+    assert_eq!(groups, [vec!["j4", "j5", "j6"], vec!["j1", "j2", "j3"]]);
+    assert!(plan.start_pose.contains("straight up"));
+
+    c.engine.enable(pb::EnableRequest {}).await.unwrap();
+    c.wait_state("ready", T).await;
+    c.engine.home_all(pb::HomeAllRequest {}).await.unwrap();
+
+    let wrist = ["j4", "j5", "j6"];
+    let mut max_together = 0;
+    let mut arm_while_wrist = false;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let done = loop {
+        let t = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+        let homing: Vec<&str> = t.axes.iter().filter(|a| a.homing).map(|a| a.id.as_str()).collect();
+        max_together = max_together.max(homing.len());
+        if homing.iter().any(|h| wrist.contains(h)) && homing.iter().any(|h| !wrist.contains(h)) {
+            arm_while_wrist = true;
+        }
+        if t.state == pb::RobotState::Ready as i32 && t.axes.iter().all(|a| a.homed) {
+            break t;
+        }
+        assert!(t.fault.is_none(), "fault while homing: {:?}", t.fault);
+        assert!(std::time::Instant::now() < deadline, "home all did not finish");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    assert!(max_together >= 2, "groups must home together (max {max_together})");
+    assert!(!arm_while_wrist, "the arm group started before the wrist group finished");
+    let pos: Vec<(String, f64)> = done.axes.iter().map(|a| (a.id.clone(), (a.commanded_position * 10.0).round() / 10.0)).collect();
+    assert_eq!(
+        pos,
+        [("j1", -170.0), ("j2", -73.0), ("j3", 180.0), ("j4", -180.0), ("j5", 120.0), ("j6", -720.0)].map(|(a, b)| (a.to_string(), b))
+    );
+
+    // Pitching the wrist from +120 to -120 here folds it into the upper arm.
+    let err = c.engine.move_to(pb::MoveToRequest { axis: "j5".into(), position: -120.0, velocity: None }).await.unwrap_err();
+    assert_eq!(err.metadata().get("motioncore-error-code").unwrap(), "collision");
+    assert!(err.message().contains("would collide"), "{}", err.message());
+    // Rolling the flange cannot collide.
+    c.engine.move_to(pb::MoveToRequest { axis: "j6".into(), position: 0.0, velocity: None }).await.unwrap();
 }

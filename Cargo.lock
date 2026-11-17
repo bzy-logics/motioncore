@@ -1224,6 +1224,7 @@ dependencies = [
  "motioncore-device-graph",
  "motioncore-engine-api",
  "motioncore-firmware-builder",
+ "motioncore-kinematics",
  "motioncore-mcu-manager",
  "motioncore-motion",
  "motioncore-plugin-runtime",

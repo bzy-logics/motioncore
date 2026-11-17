@@ -35,7 +35,7 @@ impl ApiError {
         match self.code {
             "bad_request" | "validation_failed" => Code::InvalidArgument,
             "unknown_axis" | "not_found" => Code::NotFound,
-            "not_homed" | "invalid_state" => Code::FailedPrecondition,
+            "not_homed" | "invalid_state" | "collision" => Code::FailedPrecondition,
             "mcu_error" => Code::Unavailable,
             _ => Code::Internal,
         }

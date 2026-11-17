@@ -46,6 +46,9 @@ service EngineService {
   rpc Jog(JogRequest) returns (CommandResponse);
   rpc MoveTo(MoveToRequest) returns (CommandResponse);
   rpc Home(HomeRequest) returns (CommandResponse);
+  // Run the robot's home-all plan: the axes of one group home at the same
+  // time, groups in order. Added in 1.2.0.
+  rpc HomeAll(HomeAllRequest) returns (CommandResponse);
   rpc Stop(StopRequest) returns (CommandResponse);
   rpc EmergencyStop(EmergencyStopRequest) returns (CommandResponse);
   rpc ResetFault(ResetFaultRequest) returns (CommandResponse);
@@ -166,6 +169,8 @@ message AxisTelemetry {
   double measured_position = 5;
   double velocity = 6;
   bool endstop = 7;
+  // True while this axis is homing (alone or as part of HomeAll). Added in 1.2.0.
+  bool homing = 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +190,28 @@ message RobotConfig {
   string profile = 2;
   repeated AxisConfig axes = 3;
   repeated McuConfig mcus = 4;
+  // How HomeAll proceeds. Added in 1.2.0.
+  HomeAllPlan home_all = 5;
+  // True when every axis has a link radius: moves that would make the robot
+  // collide with itself or the floor are refused (error code "collision").
+  // Added in 1.2.0.
+  bool collision_checking = 6;
+}
+
+// Axes of one group home at the same time; groups run in order. Before
+// homing, joint positions are unknown, so the engine cannot check these
+// paths: the plan's safety rests on its design and on the start pose.
+message HomeAllPlan {
+  repeated HomeAllGroup groups = 1;
+  // What pose the robot must be in before HomeAll (from the profile; may be empty).
+  string start_pose = 2;
+  // True when the plan comes from the profile's [home_all]; false for the
+  // default plan (each homeable axis alone, in profile order).
+  bool from_profile = 3;
+}
+
+message HomeAllGroup {
+  repeated string axes = 1;
 }
 
 message McuConfig {
@@ -243,8 +270,10 @@ message AxisGeometry {
   // Unit joint axis in the joint frame: rotation axis or slide direction.
   Vec3 axis = 4;
   // End point of this joint's link in its joint frame, mm (e.g. the tool
-  // flange of the last joint). Unset when not configured. Display only.
+  // flange of the last joint). Unset when not configured.
   Vec3 tip_mm = 5;
+  // Radius of this joint's link capsules, mm (collision model). Added in 1.2.0.
+  optional double radius_mm = 6;
 }
 
 message ListPluginsRequest {}
@@ -332,6 +361,8 @@ message MoveToRequest {
 message HomeRequest {
   string axis = 1;
 }
+
+message HomeAllRequest {}
 
 message StopRequest {}
 message EmergencyStopRequest {}
