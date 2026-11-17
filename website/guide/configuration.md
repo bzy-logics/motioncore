@@ -107,6 +107,29 @@ Add `[axis.endstop]` with the switch's pin, and `invert = true` for a normally-c
 
 Without homing, an axis can only be jogged relatively, at 25 % speed. See [Moving axes](/guide/motion).
 
+### 7. Geometry (optional)
+
+`[axis.geometry]` places each joint in the robot's kinematic tree, so clients such as [sindrava's 3D viewer](https://sindrava.bzy-logics.com/guide/screens#_3d-viewer) can draw the real, connected machine. It follows the URDF joint convention:
+
+```text
+frame(child) = frame(parent) · Translate(origin) · RPY(rotation) · Joint(q about axis)
+```
+
+`frame(parent)` already includes the parent joint's motion; an axis without `parent` is mounted on the robot base.
+
+```toml
+[axis.geometry]
+parent = "j1"                 # axis this joint is mounted on; omit for the robot base
+origin = [250.0, 0.0, 0.0]    # joint origin in the parent frame, mm (default 0)
+rotation = [0.0, 0.0, 0.0]    # fixed roll, pitch, yaw in degrees (about X, Y, Z, in that order)
+axis = [0.0, 0.0, 1.0]        # rotation axis (revolute) or slide direction (prismatic); default +Z
+tip = [200.0, 0.0, 0.0]       # optional: end of this joint's link (e.g. tool flange), mm
+```
+
+Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Geometry describes the machine for display (and future kinematics) only: motion is still commanded one axis at a time. Requires engine API 1.1.
+
+![A two-link arm on a linear rail, drawn from its geometry in sindrava](/screenshots/rail-arm-viewer.png)
+
 ## Validation
 
 The configuration is validated by the device graph when the engine starts and when you build firmware:
@@ -116,6 +139,7 @@ The configuration is validated by the device graph when the engine starts and wh
 - Axis ids must be unique; channels and pins must be unique per MCU; channels must exist on the board.
 - Pins must match the board's firmware pin map.
 - Homing requires an endstop, a speed ≤ `max_velocity`, and a `position` within `[min, max]`.
+- Geometry is all-or-nothing; parents must exist and may not form a cycle; joint axes must be non-zero.
 
 To check a file without starting the engine, run the firmware configure step, which resolves the configuration and prints the lockfile:
 
@@ -128,6 +152,7 @@ motioncore firmware configure --config my-robot.toml
 | File | Board | Axes |
 |---|---|---|
 | `robot-profiles/single-axis-virtual.toml` | `virtual` | 1 |
+| `robot-profiles/rail-arm-virtual.toml` | `virtual` | 3: a two-link arm on a linear rail, with geometry |
 | `robot-profiles/single-axis-stm32f411.toml` | `stm32f411-blackpill` | 1 |
 | `robot-profiles/six-axis-rp2040-pico.toml` | `rp2040-pico` | 6, with endstops and homing |
 
