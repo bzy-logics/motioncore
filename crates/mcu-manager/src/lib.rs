@@ -26,8 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use motioncore_protocol::{
-    encode_frame, FaultCode, FrameDecoder, FrameError, HostFrame, HostMsg, Identity, McuFrame,
-    McuMsg, NackReason, Status, MAX_FRAME, PROTOCOL_VERSION,
+    encode_frame, FaultCode, FrameDecoder, FrameError, HostFrame, HostMsg, Identity, McuFrame, McuMsg, NackReason, Status, MAX_FRAME, PROTOCOL_VERSION,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -121,10 +120,7 @@ pub struct McuLink {
 /// idempotent or makes the MCU *safer* (an emergency stop that overtakes
 /// queued segments only causes them to be rejected).
 fn is_priority(msg: &HostMsg) -> bool {
-    matches!(
-        msg,
-        HostMsg::EmergencyStop | HostMsg::Heartbeat | HostMsg::QueryStatus | HostMsg::Identify | HostMsg::ClockSync { .. }
-    )
+    matches!(msg, HostMsg::EmergencyStop | HostMsg::Heartbeat | HostMsg::QueryStatus | HostMsg::Identify | HostMsg::ClockSync { .. })
 }
 
 impl McuLink {
@@ -369,12 +365,7 @@ async fn writer<W: AsyncWrite + Unpin>(
     }
 }
 
-async fn reader<R: AsyncRead + Unpin>(
-    mut rd: R,
-    shared: Arc<Shared>,
-    ev: mpsc::UnboundedSender<McuEvent>,
-    status: watch::Sender<Option<Status>>,
-) {
+async fn reader<R: AsyncRead + Unpin>(mut rd: R, shared: Arc<Shared>, ev: mpsc::UnboundedSender<McuEvent>, status: watch::Sender<Option<Status>>) {
     let mut dec = FrameDecoder::new();
     let mut buf = [0u8; 512];
     loop {

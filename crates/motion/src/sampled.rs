@@ -52,15 +52,7 @@ impl Sampled {
                 // exactly on the integer step count.
                 let smooth = (v1 - v0) / t;
                 let accel = if (v0 * t + 0.5 * smooth * t * t - ds as f64).abs() <= 1.0 { smooth } else { 2.0 * (ds as f64 - v0 * t) / (t * t) };
-                Segment {
-                    axis,
-                    start_us: start_us + self.t_us[k],
-                    duration_us: dur,
-                    steps: ds as i32,
-                    v0: v0 as f32,
-                    accel: accel as f32,
-                    last: k + 1 == n,
-                }
+                Segment { axis, start_us: start_us + self.t_us[k], duration_us: dur, steps: ds as i32, v0: v0 as f32, accel: accel as f32, last: k + 1 == n }
             })
             .collect()
     }
@@ -210,10 +202,12 @@ mod tests {
 
     /// A curved joint path: joint 0 linear, joint 1 a half sine.
     fn curve(n: usize) -> Vec<Vec<f64>> {
-        (0..=n).map(|i| {
-            let s = i as f64 / n as f64;
-            vec![100.0 * s, 40.0 * (std::f64::consts::PI * s).sin()]
-        }).collect()
+        (0..=n)
+            .map(|i| {
+                let s = i as f64 / n as f64;
+                vec![100.0 * s, 40.0 * (std::f64::consts::PI * s).sin()]
+            })
+            .collect()
     }
 
     #[test]
@@ -225,8 +219,8 @@ mod tests {
         let fast = time_scale(&p, &[L, L], 1.0, 100.0, 1000.0).unwrap();
         // Joint 0 needs 100 deg at <= 60 deg/s.
         assert!(fast.duration() > 100.0 / 60.0);
-        for k in 0..fast.q.len() {
-            assert!(fast.v[k].iter().all(|v| v.abs() <= 60.0 * 1.02));
+        for v in &fast.v {
+            assert!(v.iter().all(|v| v.abs() <= 60.0 * 1.02));
         }
         assert_eq!(fast.q.last().unwrap(), p.last().unwrap());
         assert!(fast.v.last().unwrap().iter().all(|v| *v == 0.0));

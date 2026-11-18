@@ -57,11 +57,8 @@ const STATUS_PERIOD_US: u64 = 50_000;
 /// fault with `SegmentLate`. Ten tick periods.
 const LATE_TOLERANCE_US: u64 = 10 * TICK_US as u64;
 
-const FIRMWARE_VERSION: (u8, u8, u8) = (
-    parse_u8(env!("CARGO_PKG_VERSION_MAJOR")),
-    parse_u8(env!("CARGO_PKG_VERSION_MINOR")),
-    parse_u8(env!("CARGO_PKG_VERSION_PATCH")),
-);
+const FIRMWARE_VERSION: (u8, u8, u8) =
+    (parse_u8(env!("CARGO_PKG_VERSION_MAJOR")), parse_u8(env!("CARGO_PKG_VERSION_MINOR")), parse_u8(env!("CARGO_PKG_VERSION_PATCH")));
 
 const fn parse_u8(s: &str) -> u8 {
     let b = s.as_bytes();
@@ -114,17 +111,7 @@ fn main() -> ! {
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
     // 12 MHz crystal -> 125 MHz system clock, 48 MHz USB clock.
-    let clocks = hal::clocks::init_clocks_and_plls(
-        XTAL_HZ,
-        pac.XOSC,
-        pac.CLOCKS,
-        pac.PLL_SYS,
-        pac.PLL_USB,
-        &mut pac.RESETS,
-        &mut watchdog,
-    )
-    .ok()
-    .unwrap();
+    let clocks = hal::clocks::init_clocks_and_plls(XTAL_HZ, pac.XOSC, pac.CLOCKS, pac.PLL_SYS, pac.PLL_USB, &mut pac.RESETS, &mut watchdog).ok().unwrap();
     // The PIO divider and pulse timing assume this clock exactly.
     assert_eq!(clocks.system_clock.freq().to_Hz(), SYS_CLOCK_HZ);
 
@@ -157,10 +144,7 @@ fn main() -> ! {
     .unwrap();
     let mut serial = SerialPort::new(usb_bus);
     let mut usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .strings(&[StringDescriptors::default()
-            .manufacturer("MotionCore")
-            .product("MotionCore MCU (rp2040)")
-            .serial_number("MC-RP2040")])
+        .strings(&[StringDescriptors::default().manufacturer("MotionCore").product("MotionCore MCU (rp2040)").serial_number("MC-RP2040")])
         .unwrap()
         .device_class(usbd_serial::USB_CLASS_CDC)
         .build();

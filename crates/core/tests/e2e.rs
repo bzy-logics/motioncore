@@ -64,16 +64,29 @@ impl Client {
         let vel = p["velocity"].as_f64();
         match method {
             "status" => e.get_status(pb::GetStatusRequest {}).await.map(|r| telemetry_json(r.into_inner())).map_err(err),
-            "config" => e.get_robot_config(pb::GetRobotConfigRequest {}).await.map(|r| {
-                let c = r.into_inner();
-                json!({"axes": c.axes.iter().map(|a| json!({"id": a.id, "unit": a.unit, "actuator": a.actuator})).collect::<Vec<_>>()})
-            }).map_err(err),
-            "plugins" => e.list_plugins(pb::ListPluginsRequest {}).await.map(|r| {
-                json!(r.into_inner().plugins.iter().map(|p| json!({
-                    "id": p.id,
-                    "state": lower(pb::PluginState::try_from(p.state).unwrap().as_str_name(), "PLUGIN_STATE_"),
-                })).collect::<Vec<_>>())
-            }).map_err(err),
+            "config" => e
+                .get_robot_config(pb::GetRobotConfigRequest {})
+                .await
+                .map(|r| {
+                    let c = r.into_inner();
+                    json!({"axes": c.axes.iter().map(|a| json!({"id": a.id, "unit": a.unit, "actuator": a.actuator})).collect::<Vec<_>>()})
+                })
+                .map_err(err),
+            "plugins" => e
+                .list_plugins(pb::ListPluginsRequest {})
+                .await
+                .map(|r| {
+                    json!(r
+                        .into_inner()
+                        .plugins
+                        .iter()
+                        .map(|p| json!({
+                            "id": p.id,
+                            "state": lower(pb::PluginState::try_from(p.state).unwrap().as_str_name(), "PLUGIN_STATE_"),
+                        }))
+                        .collect::<Vec<_>>())
+                })
+                .map_err(err),
             "enable" => ok(e.enable(pb::EnableRequest {}).await),
             "disable" => ok(e.disable(pb::DisableRequest {}).await),
             "stop" => ok(e.stop(pb::StopRequest {}).await),
@@ -401,10 +414,7 @@ async fn home_all_runs_groups_together_and_collisions_are_refused() {
     assert!(max_together >= 2, "groups must home together (max {max_together})");
     assert!(!arm_while_wrist, "the arm group started before the wrist group finished");
     let pos: Vec<(String, f64)> = done.axes.iter().map(|a| (a.id.clone(), (a.commanded_position * 10.0).round() / 10.0)).collect();
-    assert_eq!(
-        pos,
-        [("j1", -170.0), ("j2", -73.0), ("j3", 180.0), ("j4", -180.0), ("j5", 120.0), ("j6", -720.0)].map(|(a, b)| (a.to_string(), b))
-    );
+    assert_eq!(pos, [("j1", -170.0), ("j2", -73.0), ("j3", 180.0), ("j4", -180.0), ("j5", 120.0), ("j6", -720.0)].map(|(a, b)| (a.to_string(), b)));
 
     // Pitching the wrist from +120 to -120 here folds it into the upper arm.
     let err = c.engine.move_to(pb::MoveToRequest { axis: "j5".into(), position: -120.0, velocity: None }).await.unwrap_err();
@@ -437,8 +447,7 @@ async fn move_j_moves_six_axes_together_on_a_straight_joint_path() {
     assert_eq!(e.metadata().get("motioncore-error-code").unwrap(), "not_homed");
 
     c.engine.home_all(pb::HomeAllRequest {}).await.unwrap();
-    c.wait_for("homed", Duration::from_secs(60), |s| s["state"] == "ready" && s["axes"].as_array().unwrap().iter().all(|a| a["homed"] == true))
-        .await;
+    c.wait_for("homed", Duration::from_secs(60), |s| s["state"] == "ready" && s["axes"].as_array().unwrap().iter().all(|a| a["homed"] == true)).await;
     let t0 = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
     let start: Vec<f64> = joints(&t0).iter().map(|j| j.1).collect();
 
@@ -530,8 +539,7 @@ async fn homed_arm() -> Client {
     c.engine.enable(pb::EnableRequest {}).await.unwrap();
     c.wait_state("ready", T).await;
     c.engine.home_all(pb::HomeAllRequest {}).await.unwrap();
-    c.wait_for("homed", Duration::from_secs(60), |s| s["state"] == "ready" && s["axes"].as_array().unwrap().iter().all(|a| a["homed"] == true))
-        .await;
+    c.wait_for("homed", Duration::from_secs(60), |s| s["state"] == "ready" && s["axes"].as_array().unwrap().iter().all(|a| a["homed"] == true)).await;
     c
 }
 
@@ -548,7 +556,12 @@ async fn move_j_path_blends_through_waypoints_without_stopping() {
     let mut c = homed_arm().await;
     // Corners, not reversals: at a corner that doubles back on itself the
     // blend passes through zero velocity, as it must.
-    let wps = [[0.0, 0.0, 90.0, 0.0, 0.0, 0.0], [60.0, 30.0, 120.0, 90.0, -60.0, 180.0], [0.0, 45.0, 60.0, 0.0, -75.0, 0.0], [-60.0, 20.0, 100.0, -90.0, 60.0, -180.0]];
+    let wps = [
+        [0.0, 0.0, 90.0, 0.0, 0.0, 0.0],
+        [60.0, 30.0, 120.0, 90.0, -60.0, 180.0],
+        [0.0, 45.0, 60.0, 0.0, -75.0, 0.0],
+        [-60.0, 20.0, 100.0, -90.0, 60.0, -180.0],
+    ];
 
     // Rejected before anything moves.
     let mut bad = wps.to_vec();
@@ -644,6 +657,8 @@ async fn move_l_keeps_the_tool_on_a_straight_line() {
     let mut worst_turn = 0.0f64;
     let mut progress = -1.0f64;
     let mut moving = 0;
+    let mut last_mid: Option<Instant> = None;
+    let mut worst_gap = Duration::ZERO;
     let started = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -659,6 +674,11 @@ async fn move_l_keeps_the_tool_on_a_straight_line() {
         assert!(along >= progress - 0.05, "went backwards: {along} after {progress}");
         if along > 1.0 && along < len - 1.0 {
             moving += 1;
+            let now = Instant::now();
+            if let Some(prev) = last_mid {
+                worst_gap = worst_gap.max(now - prev);
+            }
+            last_mid = Some(now);
         }
         progress = along;
         if t.state == pb::RobotState::Ready as i32 && along > 1.0 {
@@ -671,7 +691,10 @@ async fn move_l_keeps_the_tool_on_a_straight_line() {
     // Off the line by less than the step resolution of the joints.
     assert!(worst_off < 0.3, "tool left the line by {worst_off:.3} mm");
     assert!(worst_turn < 0.1, "tool turned by {worst_turn:.3} deg");
-    assert!(moving > 50, "{moving} samples mid-line");
+    // Coverage of the line, independent of how fast the machine polls: enough
+    // samples and no long gap between them.
+    assert!(moving >= 20, "{moving} samples mid-line");
+    assert!(worst_gap <= Duration::from_millis(250), "gap of {worst_gap:?} between mid-line samples");
     // 126.5 mm at 60 mm/s with 500 mm/s² ramps: about 2.2 s.
     assert!((2.0..3.2).contains(&took), "took {took:.2} s");
     let end = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();

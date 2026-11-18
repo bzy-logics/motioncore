@@ -23,9 +23,7 @@ pub enum FrameError {
 /// of bytes written.
 pub fn encode_frame<T: Serialize>(msg: &T, out: &mut [u8]) -> Result<usize, FrameError> {
     let mut raw = [0u8; MAX_PAYLOAD];
-    let used = postcard::to_slice(msg, &mut raw[..MAX_PAYLOAD - 2])
-        .map_err(|_| FrameError::TooLarge)?
-        .len();
+    let used = postcard::to_slice(msg, &mut raw[..MAX_PAYLOAD - 2]).map_err(|_| FrameError::TooLarge)?.len();
     let crc = crc16(&raw[..used]);
     raw[used..used + 2].copy_from_slice(&crc.to_le_bytes());
     let n = cobs::encode(&raw[..used + 2], out).map_err(|_| FrameError::TooLarge)?;
@@ -116,22 +114,8 @@ mod tests {
         let msgs = [
             HostMsg::Identify,
             HostMsg::ClockSync { host_time_us: 123_456_789 },
-            HostMsg::QueueSegment(Segment {
-                axis: 0,
-                start_us: 9_000_000,
-                duration_us: 20_000,
-                steps: -120,
-                v0: -1000.0,
-                accel: -2000.0,
-                last: false,
-            }),
-            HostMsg::Home(HomeParams {
-                axis: 1,
-                positive: false,
-                speed: 800.0,
-                max_travel_steps: 20_000,
-                home_steps: -7555,
-            }),
+            HostMsg::QueueSegment(Segment { axis: 0, start_us: 9_000_000, duration_us: 20_000, steps: -120, v0: -1000.0, accel: -2000.0, last: false }),
+            HostMsg::Home(HomeParams { axis: 1, positive: false, speed: 800.0, max_travel_steps: 20_000, home_steps: -7555 }),
             HostMsg::EmergencyStop,
         ];
         for (i, msg) in msgs.into_iter().enumerate() {
@@ -147,25 +131,10 @@ mod tests {
     fn largest_status_fits() {
         let mut axes = Vec::new();
         for _ in 0..crate::MAX_AXES {
-            axes.push(AxisStatus {
-                position_steps: i32::MIN,
-                velocity: -1.0e9,
-                enabled: true,
-                moving: true,
-                homing: true,
-                endstop: true,
-            })
-            .unwrap();
+            axes.push(AxisStatus { position_steps: i32::MIN, velocity: -1.0e9, enabled: true, moving: true, homing: true, endstop: true }).unwrap();
         }
-        let frame = McuFrame {
-            seq: u32::MAX,
-            msg: McuMsg::Status(Status {
-                mcu_time_us: u64::MAX,
-                fault: Some(FaultCode::StepRateExceeded),
-                queue_depth: 255,
-                axes,
-            }),
-        };
+        let frame =
+            McuFrame { seq: u32::MAX, msg: McuMsg::Status(Status { mcu_time_us: u64::MAX, fault: Some(FaultCode::StepRateExceeded), queue_depth: 255, axes }) };
         assert_eq!(decode_all::<McuFrame>(&encode(&frame)), vec![Ok(frame)]);
     }
 
@@ -230,15 +199,13 @@ mod tests {
         }
         assert_eq!(d.push::<HostFrame>(0), Some(Err(FrameError::TooLarge)));
         let f = HostFrame { seq: 3, msg: HostMsg::Identify };
-        let got: std::vec::Vec<_> =
-            encode(&f).iter().filter_map(|&b| d.push::<HostFrame>(b)).collect();
+        let got: std::vec::Vec<_> = encode(&f).iter().filter_map(|&b| d.push::<HostFrame>(b)).collect();
         assert_eq!(got, vec![Ok(f)]);
     }
 
     #[test]
     fn capability_names_maps_bits() {
-        let names: std::vec::Vec<_> =
-            capability_names(caps::STEPPER_STEP_DIR | caps::WATCHDOG).collect();
+        let names: std::vec::Vec<_> = capability_names(caps::STEPPER_STEP_DIR | caps::WATCHDOG).collect();
         assert_eq!(names, ["stepper.step_dir", "watchdog"]);
         assert_eq!(caps::from_name("endstop"), Some(caps::ENDSTOP));
     }

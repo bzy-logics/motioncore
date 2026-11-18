@@ -105,7 +105,9 @@ pub enum Event {
     Fault(Fault),
     EmergencyStop,
     /// Operator fault reset. `connected` tells where to land.
-    ResetFault { connected: bool },
+    ResetFault {
+        connected: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -143,10 +145,7 @@ impl Supervisor {
 
     /// Check whether `event` would be accepted, without applying it.
     pub fn check(&self, event: &Event) -> Result<RobotState, TransitionError> {
-        next_state(self.state, event).ok_or_else(|| TransitionError {
-            state: self.state,
-            event: event_name(event).to_string(),
-        })
+        next_state(self.state, event).ok_or_else(|| TransitionError { state: self.state, event: event_name(event).to_string() })
     }
 
     /// Apply an event. Returns the new state.
@@ -200,11 +199,13 @@ fn next_state(s: RobotState, e: &Event) -> Option<RobotState> {
         // Emergency stop always wins and latches.
         (_, E::EmergencyStop) => S::EmergencyStopped,
         (S::EmergencyStopped, E::ResetFault { connected }) => {
-            if *connected { S::Disabled } else { S::Disconnected }
+            if *connected {
+                S::Disabled
+            } else {
+                S::Disconnected
+            }
         }
-        (S::EmergencyStopped, E::ConnectionLost | E::Fault(_) | E::Disable | E::MotionComplete) => {
-            S::EmergencyStopped
-        }
+        (S::EmergencyStopped, E::ConnectionLost | E::Fault(_) | E::Disable | E::MotionComplete) => S::EmergencyStopped,
 
         (S::Disconnected, E::Connect) => S::Initializing,
         (S::Initializing, E::Initialized) => S::Disabled,
@@ -217,7 +218,11 @@ fn next_state(s: RobotState, e: &Event) -> Option<RobotState> {
         (_, E::Fault(_)) => S::Faulted,
 
         (S::Faulted, E::ResetFault { connected }) => {
-            if *connected { S::Disabled } else { S::Disconnected }
+            if *connected {
+                S::Disabled
+            } else {
+                S::Disconnected
+            }
         }
         (S::Faulted, E::Disable | E::MotionComplete) => S::Faulted,
 

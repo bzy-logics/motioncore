@@ -17,7 +17,6 @@ pub mod boards;
 
 pub use boards::{Board, ChannelPins, FlashMethod, BOARDS};
 
-
 // ---------------------------------------------------------------------------
 // Configuration file schema (TOML)
 // ---------------------------------------------------------------------------
@@ -263,8 +262,7 @@ pub enum ConfigError {
 pub const SCHEMA_VERSION: u32 = 1;
 
 pub fn load(path: &Path) -> Result<ResolvedRobot, ConfigError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| ConfigError::Io { path: path.display().to_string(), source: e })?;
+    let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Io { path: path.display().to_string(), source: e })?;
     parse(&text)
 }
 
@@ -276,7 +274,6 @@ pub fn parse(text: &str) -> Result<ResolvedRobot, ConfigError> {
 /// Validate a robot description against board metadata.
 pub fn resolve(mut file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
     let mut issues = Vec::new();
-
 
     if file.schema != SCHEMA_VERSION {
         add(&mut issues, "schema".into(), format!("unsupported schema {} (expected {SCHEMA_VERSION})", file.schema));
@@ -304,13 +301,10 @@ pub fn resolve(mut file: RobotFile) -> Result<ResolvedRobot, Vec<Issue>> {
             if transport == Transport::Virtual && !board.is_virtual {
                 add(&mut issues, format!("{path}.transport"), format!("board '{}' is physical; virtual transport requires the 'virtual' board", board.id));
             }
-            mcus.insert(name.clone(), ResolvedMcu {
-                name: name.clone(),
-                board,
-                transport,
-                watchdog_ms: m.watchdog_ms,
-                required_firmware_capabilities: vec!["watchdog"],
-            });
+            mcus.insert(
+                name.clone(),
+                ResolvedMcu { name: name.clone(), board, transport, watchdog_ms: m.watchdog_ms, required_firmware_capabilities: vec!["watchdog"] },
+            );
         }
     }
 
@@ -451,15 +445,11 @@ fn check_geometry(file: &mut RobotFile, issues: &mut Vec<Issue>) {
     }
     for (i, a) in file.axes.iter().enumerate() {
         if a.geometry.is_none() {
-            issues.push(Issue {
-                path: format!("axis[{i}]({}).geometry", a.id),
-                message: "missing: when one axis has geometry, every axis needs it".into(),
-            });
+            issues.push(Issue { path: format!("axis[{i}]({}).geometry", a.id), message: "missing: when one axis has geometry, every axis needs it".into() });
         }
     }
     let ids: HashSet<String> = file.axes.iter().map(|a| a.id.clone()).collect();
-    let parent_of: HashMap<String, Option<String>> =
-        file.axes.iter().filter_map(|a| a.geometry.as_ref().map(|g| (a.id.clone(), g.parent.clone()))).collect();
+    let parent_of: HashMap<String, Option<String>> = file.axes.iter().filter_map(|a| a.geometry.as_ref().map(|g| (a.id.clone(), g.parent.clone()))).collect();
     for (i, a) in file.axes.iter_mut().enumerate() {
         let Some(g) = a.geometry.as_mut() else { continue };
         let p = format!("axis[{i}]({}).geometry", a.id);
@@ -525,9 +515,7 @@ fn check_home_all(file: &RobotFile, issues: &mut Vec<Issue>) {
         for id in group {
             match file.axes.iter().find(|a| &a.id == id) {
                 None => issues.push(Issue { path: gp.clone(), message: format!("unknown axis '{id}'") }),
-                Some(a) if a.homing.is_none() => {
-                    issues.push(Issue { path: gp.clone(), message: format!("axis '{id}' has no [axis.homing]") })
-                }
+                Some(a) if a.homing.is_none() => issues.push(Issue { path: gp.clone(), message: format!("axis '{id}' has no [axis.homing]") }),
                 Some(_) => {}
             }
             if !seen.insert(id.clone()) {

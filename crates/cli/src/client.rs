@@ -25,11 +25,7 @@ pub async fn connect(addr: &str) -> Result<Client> {
     let mut engine = EngineServiceClient::new(channel);
     let info = engine.get_info(pb::GetInfoRequest {}).await?.into_inner();
     if !motioncore_engine_api::is_compatible(&info.api_version) {
-        anyhow::bail!(
-            "engine speaks API {}, this CLI needs {} (same 0.MINOR)",
-            info.api_version,
-            motioncore_engine_api::API_VERSION
-        );
+        anyhow::bail!("engine speaks API {}, this CLI needs {} (same 0.MINOR)", info.api_version, motioncore_engine_api::API_VERSION);
     }
     Ok(Client { engine })
 }
@@ -37,13 +33,13 @@ pub async fn connect(addr: &str) -> Result<Client> {
 #[cfg(unix)]
 async fn unix_channel(path: &str) -> Result<Channel> {
     let path = path.to_string();
-    Ok(Endpoint::try_from("http://[::1]:0")?
+    Endpoint::try_from("http://[::1]:0")?
         .connect_with_connector(tower::service_fn(move |_| {
             let path = path.clone();
             async move { Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(tokio::net::UnixStream::connect(path).await?)) }
         }))
         .await
-        .context("connecting to engine socket (is `motioncore start` running?)")?)
+        .context("connecting to engine socket (is `motioncore start` running?)")
 }
 
 #[cfg(not(unix))]
@@ -107,10 +103,7 @@ pub fn print_telemetry(t: &pb::Telemetry) {
     if let Some(tool) = &t.tool {
         let v = |v: &Option<pb::Vec3>| v.as_ref().map_or([0.0; 3], |v| [v.x, v.y, v.z]);
         let (p, r) = (v(&tool.position_mm), v(&tool.rotation_deg));
-        println!(
-            "tool   x {:.2} y {:.2} z {:.2} mm   roll {:.2} pitch {:.2} yaw {:.2} deg",
-            p[0], p[1], p[2], r[0], r[1], r[2]
-        );
+        println!("tool   x {:.2} y {:.2} z {:.2} mm   roll {:.2} pitch {:.2} yaw {:.2} deg", p[0], p[1], p[2], r[0], r[1], r[2]);
     }
 }
 

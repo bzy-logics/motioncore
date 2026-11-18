@@ -1,0 +1,83 @@
+# Checks every pull request and every push to main: formatting, clippy and the
+# full test suite on the host (unit, property and end-to-end tests on the
+# simulated MCU), both firmware images, and the Python tools and example.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  rust:
+    name: fmt, clippy, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the channel, components and targets.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy (host crates)
+        run: cargo clippy --workspace --all-targets --exclude motioncore-board-stm32f4 --exclude motioncore-board-rp2040 -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  firmware:
+    name: firmware ${{ matrix.board }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: rp2040
+            crate: motioncore-board-rp2040
+            target: thumbv6m-none-eabi
+          - board: stm32f4
+            crate: motioncore-board-stm32f4
+            target: thumbv7em-none-eabihf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: clippy
+        run: cargo clippy -p ${{ matrix.crate }} --target ${{ matrix.target }} -- -D warnings
+      - name: build
+        run: cargo build -p ${{ matrix.crate }} --profile firmware --target ${{ matrix.target }}
+
+  python:
+    name: tools and example
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: step-skew self-test
+        run: python tools/step-skew/step_skew.py --self-test
+      - name: sim-vision-pick unit tests
+        working-directory: examples/sim-vision-pick
+        run: python -m unittest -v

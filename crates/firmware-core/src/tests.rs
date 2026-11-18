@@ -52,15 +52,7 @@ fn core() -> Core {
 }
 
 fn cfg(axis: u8) -> AxisConfig {
-    AxisConfig {
-        axis,
-        min_steps: -10_000,
-        max_steps: 10_000,
-        max_rate: 5_000.0,
-        stop_decel: 20_000.0,
-        invert_dir: false,
-        invert_endstop: false,
-    }
+    AxisConfig { axis, min_steps: -10_000, max_steps: 10_000, max_rate: 5_000.0, stop_decel: 20_000.0, invert_dir: false, invert_endstop: false }
 }
 
 struct Rig {
@@ -157,15 +149,7 @@ fn executes_contiguous_segments_exactly() {
 fn accelerating_segment_lands_on_integer_target() {
     let mut r = Rig::new();
     // a = 4000 steps/s², 0.1 s from rest: 20 steps.
-    r.cmd(HostMsg::QueueSegment(Segment {
-        axis: 0,
-        start_us: r.now + 1_000,
-        duration_us: 100_000,
-        steps: 20,
-        v0: 0.0,
-        accel: 4000.0,
-        last: true,
-    }));
+    r.cmd(HostMsg::QueueSegment(Segment { axis: 0, start_us: r.now + 1_000, duration_us: 100_000, steps: 20, v0: 0.0, accel: 4000.0, last: true }));
     assert!(matches!(r.last_ack_or_nack(), McuMsg::Ack { .. }));
     r.run_for(50_000);
     let mid = r.core.position(0);
@@ -339,7 +323,6 @@ fn emergency_stop_latches_and_disables() {
     assert!(!r.hal.enabled[0]);
 }
 
-
 #[test]
 fn limit_fault_reset_requires_released_endstop() {
     let mut r = Rig::new();
@@ -460,8 +443,7 @@ fn six_axis_coordinated_move_runs_in_lockstep() {
     let goal = [-30.0, 20.0, -60.0, 75.0, 40.0, -180.0];
     let plan = plan_synchronized(&start, &goal, &limits).unwrap();
     let t0 = now + 50_000;
-    let mut segs: StdVec<Segment> =
-        plan.iter().enumerate().flat_map(|(i, p)| to_segments(p, i as u8, spu[i], t0, 20_000)).collect();
+    let mut segs: StdVec<Segment> = plan.iter().enumerate().flat_map(|(i, p)| to_segments(p, i as u8, spu[i], t0, 20_000)).collect();
     segs.sort_by_key(|s| (s.start_us, s.axis));
     let target: StdVec<i64> = (0..6).map(|i| (goal[i] * spu[i]).round() as i64).collect();
     let end_us = segs.iter().map(|s| s.end_us()).max().unwrap();

@@ -159,13 +159,13 @@ pub fn program(t: &Timing) -> Result<Program, TimingError> {
     let setup_delay = (t.dir_setup_cycles - 3) as u16;
     let high_delay = (t.high_cycles - 1) as u16;
     let code = [
-        0x80A0 | side_delay(0, 0),                     // pull block
-        0x6001 | side_delay(0, setup_delay),           // out pins, 1 [S]
-        0x6020 | 15 | side_delay(0, 0),                // out x, 15
-        0x60C0 | 16 | side_delay(0, 0),                // out isr, 16
-        0xA042 | side_delay(1, high_delay),            // nop (mov y, y) side 1 [H]
-        0xA046 | side_delay(0, 0),                     // mov y, isr
-        0x0080 | LABEL_LOW as u16 | side_delay(0, 0),  // jmp y-- low
+        0x80A0 | side_delay(0, 0),                      // pull block
+        0x6001 | side_delay(0, setup_delay),            // out pins, 1 [S]
+        0x6020 | 15 | side_delay(0, 0),                 // out x, 15
+        0x60C0 | 16 | side_delay(0, 0),                 // out isr, 16
+        0xA042 | side_delay(1, high_delay),             // nop (mov y, y) side 1 [H]
+        0xA046 | side_delay(0, 0),                      // mov y, isr
+        0x0080 | LABEL_LOW as u16 | side_delay(0, 0),   // jmp y-- low
         0x0040 | LABEL_PULSE as u16 | side_delay(0, 0), // jmp x-- pulse
     ];
     Ok(Program { code, wrap_source: 7, wrap_target: 0, side_set_bits: 1 })
@@ -295,6 +295,6 @@ pub const fn sm_for_axis(axis: u8) -> (u8, u8) {
 #[cfg(test)]
 mod emu;
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod pipeline_tests;
+#[cfg(test)]
+mod tests;

@@ -63,13 +63,7 @@ impl FirmwareJobs {
     }
 
     pub fn get(&self, id: &str) -> Result<pb::FirmwareJob, ApiError> {
-        self.jobs
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|j| j.pb.id == id)
-            .map(|j| j.pb.clone())
-            .ok_or_else(|| ApiError::not_found(format!("no firmware job '{id}'")))
+        self.jobs.lock().unwrap().iter().find(|j| j.pb.id == id).map(|j| j.pb.clone()).ok_or_else(|| ApiError::not_found(format!("no firmware job '{id}'")))
     }
 
     fn create(&self, kind: pb::JobKind, mcu: &str) -> pb::FirmwareJob {
@@ -119,15 +113,12 @@ impl FirmwareJobs {
     }
 
     fn busy(&self) -> bool {
-        self.jobs.lock().unwrap().iter().any(|j| {
-            j.pb.state == pb::JobState::Queued as i32 || j.pb.state == pb::JobState::Running as i32
-        })
+        self.jobs.lock().unwrap().iter().any(|j| j.pb.state == pb::JobState::Queued as i32 || j.pb.state == pb::JobState::Running as i32)
     }
 
     pub fn start_build(self: &Arc<Self>, engine: &Engine, mcu: &str) -> Result<pb::FirmwareJob, ApiError> {
-        let root = self.repo_root.clone().ok_or_else(|| {
-            ApiError::invalid_state("firmware builds need the motioncore source tree (start the engine with --repo)")
-        })?;
+        let root =
+            self.repo_root.clone().ok_or_else(|| ApiError::invalid_state("firmware builds need the motioncore source tree (start the engine with --repo)"))?;
         let m = builder::select_mcu(engine.robot(), Some(mcu)).map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
         if m.board.firmware_target.is_none() {
             return Err(ApiError::bad_request(format!("board '{}' needs no firmware", m.board.id)));
@@ -174,10 +165,7 @@ impl FirmwareJobs {
         }
         let (dir, mcu) = {
             let jobs = self.jobs.lock().unwrap();
-            let b = jobs
-                .iter()
-                .find(|j| j.pb.id == build_job_id)
-                .ok_or_else(|| ApiError::not_found(format!("no firmware job '{build_job_id}'")))?;
+            let b = jobs.iter().find(|j| j.pb.id == build_job_id).ok_or_else(|| ApiError::not_found(format!("no firmware job '{build_job_id}'")))?;
             if b.pb.kind != pb::JobKind::Build as i32 || b.pb.state != pb::JobState::Succeeded as i32 {
                 return Err(ApiError::bad_request(format!("job '{build_job_id}' is not a succeeded build")));
             }

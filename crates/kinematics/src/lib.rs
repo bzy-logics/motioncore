@@ -42,11 +42,7 @@ pub trait Kinematics: Send + Sync {
 
 fn check(values: &[f64], expected: usize, pose: bool) -> Result<(), KinematicsError> {
     if values.len() != expected {
-        return Err(if pose {
-            KinematicsError::PoseSize { expected, got: values.len() }
-        } else {
-            KinematicsError::JointCount { expected, got: values.len() }
-        });
+        return Err(if pose { KinematicsError::PoseSize { expected, got: values.len() } } else { KinematicsError::JointCount { expected, got: values.len() } });
     }
     match values.iter().position(|v| !v.is_finite()) {
         Some(i) => Err(KinematicsError::NonFinite(i)),

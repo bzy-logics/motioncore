@@ -84,9 +84,8 @@ pub static BOARDS: &[Board] = &[
         // Bounded by the 20 kHz core tick of the v0.1 firmware.
         max_step_rate: 20_000,
         pins: &[
-            "PA0", "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7", "PA8", "PA9", "PA10", "PA15",
-            "PB0", "PB1", "PB3", "PB4", "PB5", "PB6", "PB7", "PB8", "PB9", "PB10", "PB12", "PB13",
-            "PB14", "PB15",
+            "PA0", "PA1", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7", "PA8", "PA9", "PA10", "PA15", "PB0", "PB1", "PB3", "PB4", "PB5", "PB6", "PB7", "PB8",
+            "PB9", "PB10", "PB12", "PB13", "PB14", "PB15",
         ],
         io_voltage: Some(3.3),
         provisional: true,
@@ -107,8 +106,8 @@ pub static BOARDS: &[Board] = &[
         // itself allows 250 kHz; see docs/rp2040.md before raising it.
         max_step_rate: 50_000,
         pins: &[
-            "GP0", "GP1", "GP2", "GP3", "GP4", "GP5", "GP6", "GP7", "GP8", "GP9", "GP10", "GP11", "GP12", "GP13",
-            "GP14", "GP15", "GP16", "GP17", "GP18", "GP19", "GP20", "GP21", "GP22", "GP26", "GP27", "GP28",
+            "GP0", "GP1", "GP2", "GP3", "GP4", "GP5", "GP6", "GP7", "GP8", "GP9", "GP10", "GP11", "GP12", "GP13", "GP14", "GP15", "GP16", "GP17", "GP18",
+            "GP19", "GP20", "GP21", "GP22", "GP26", "GP27", "GP28",
         ],
         io_voltage: Some(3.3),
         provisional: true,

@@ -10,7 +10,11 @@ impl Plugin for Fake {
         self.m.clone()
     }
     fn activate(&mut self, _: &PluginContext) -> Result<(), String> {
-        if self.fail { Err("boom".into()) } else { Ok(()) }
+        if self.fail {
+            Err("boom".into())
+        } else {
+            Ok(())
+        }
     }
 }
 

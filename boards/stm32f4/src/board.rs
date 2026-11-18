@@ -34,13 +34,7 @@ impl BoardHal {
     pub fn new(pa0: PA0, pa1: PA1, pa2: PA2, pb0: PB0) -> Self {
         let mut enable = pa2.into_push_pull_output();
         enable.set_high(); // disabled
-        Self {
-            step: pa0.into_push_pull_output(),
-            dir: pa1.into_push_pull_output(),
-            enable,
-            endstop: pb0.into_pull_up_input(),
-            dir_state: false,
-        }
+        Self { step: pa0.into_push_pull_output(), dir: pa1.into_push_pull_output(), enable, endstop: pb0.into_pull_up_input(), dir_state: false }
     }
 }
 
