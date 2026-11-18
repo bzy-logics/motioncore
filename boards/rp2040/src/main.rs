@@ -27,7 +27,6 @@ use core::cell::RefCell;
 use critical_section::Mutex;
 use motioncore_firmware_core::{BoardInfo, McuCore};
 use motioncore_protocol::{encode_frame, FrameDecoder, HostFrame, MAX_FRAME};
-use panic_halt as _;
 use rp2040_hal::{
     self as hal,
     clocks::Clock as _,
@@ -237,6 +236,20 @@ fn TIMER_IRQ_0() {
             }
             let _ = s.alarm.schedule_at(Instant::from_ticks(s.next_tick_us));
             s.core.tick(now, &mut s.hal);
+            #[cfg(feature = "bench-panic")]
+            if s.hal.panic_requested() {
+                panic!("bench-panic trigger (GP28)");
+            }
         }
     });
+}
+
+/// Outputs go to their safe state immediately (drives disabled, pulse output
+/// stopped, STEP/DIR low); the hardware watchdog then resets the MCU.
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    board::safe_shutdown();
+    loop {
+        cortex_m::asm::nop();
+    }
 }

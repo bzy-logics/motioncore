@@ -356,7 +356,7 @@ async fn start(config: &Path, listen: &str, plugin_dir: Option<&Path>, repo: Opt
         None => std::env::current_dir().ok().and_then(|d| builder::find_repo_root(&d).ok()),
     };
     let config_abs = std::fs::canonicalize(config)?;
-    let engine = engine::Engine::new(robot, registry, engine::Options { fault_injection })?;
+    let engine = engine::Engine::new(robot, registry, engine::Options { fault_injection, ..Default::default() })?;
     engine.spawn();
     let jobs = FirmwareJobs::new(repo_root.clone(), config_abs);
 

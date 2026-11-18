@@ -36,8 +36,13 @@ const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long fresh telemetry may take to confirm a homed position.
 const HOMING_CONFIRM_TIMEOUT: Duration = Duration::from_millis(500);
 
+#[derive(Debug, Clone, Default)]
 pub struct Options {
     pub fault_injection: bool,
+    /// Test hook: wait this long before planning a move (outside the engine
+    /// lock), to exercise commands that arrive while a plan is in flight.
+    /// Zero in production.
+    pub planning_delay: Duration,
 }
 
 struct AxisRt {
@@ -63,6 +68,10 @@ struct Inner {
     last_end_us: u64,
     /// Bumped whenever planned motion is discarded (stop, fault, e-stop).
     motion_gen: u64,
+    /// Bumped whenever anything a motion plan depends on changes: every
+    /// supervisor transition, discarded motion, resync from the MCU, homing
+    /// results. A plan is committed only if it is unchanged (#22).
+    revision: u64,
     telemetry_seq: u64,
     /// Homing in progress (Home = one group of one axis, HomeAll = the plan).
     homing: Option<HomingRun>,
@@ -91,10 +100,28 @@ pub struct Engine {
     telemetry: broadcast::Sender<Arc<pb::Telemetry>>,
     /// Capsule model (when every axis has a link radius) and the axis index
     /// of each model joint (the model lists parents first).
-    collision: Option<(CollisionModel, Vec<usize>)>,
+    collision: Option<Arc<(CollisionModel, Vec<usize>)>>,
     /// Serial chain for Cartesian moves and the tool pose, and the axis
     /// index of each chain joint.
-    chain: Option<(Chain, Vec<usize>)>,
+    chain: Option<Arc<(Chain, Vec<usize>)>>,
+}
+
+/// Target of a single-axis move.
+enum MoveTarget {
+    Absolute(f64),
+    Relative(f64),
+}
+
+/// A motion planned off the engine lock: segments timed from 0 (placed on the
+/// MCU clock at commit), the commanded positions at its end, a log line.
+struct PlannedMotion {
+    segs: Vec<Segment>,
+    ends: Vec<(usize, f64)>,
+    log: String,
+}
+
+fn axis_limits(c: &AxisSection) -> AxisLimits {
+    AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
 }
 
 /// Build the collision model from the profile geometry, parents first.
@@ -186,8 +213,8 @@ impl Engine {
         }
         let mcu = robot.mcus.values().next().unwrap().clone();
         let axes = robot.file.axes.iter().map(|a| AxisRt { cfg: a.clone(), homed: false, enabled: false, commanded: 0.0 }).collect();
-        let collision = collision_model(&robot);
-        let chain = serial_chain(&robot);
+        let collision = collision_model(&robot).map(Arc::new);
+        let chain = serial_chain(&robot).map(Arc::new);
         Ok(Arc::new(Self {
             robot,
             mcu,
@@ -202,6 +229,7 @@ impl Engine {
                 in_flight: VecDeque::new(),
                 last_end_us: 0,
                 motion_gen: 0,
+                revision: 0,
                 telemetry_seq: 0,
                 homing: None,
             }),
@@ -273,7 +301,7 @@ impl Engine {
                     }
                     g.link = None;
                     if g.sup.state() == RobotState::Initializing {
-                        let _ = g.sup.apply(Event::ConnectionLost);
+                        let _ = g.apply(Event::ConnectionLost);
                     }
                 }
             }
@@ -313,7 +341,7 @@ impl Engine {
         let (link, events, vtask) = self.open_transport().await?;
         {
             let mut g = self.inner.lock().unwrap();
-            g.sup.apply(Event::Connect)?;
+            g.apply(Event::Connect)?;
             g.link = Some(link.clone());
             g.virtual_task = vtask;
         }
@@ -351,7 +379,7 @@ impl Engine {
             a.enabled = false;
             a.commanded = 0.0;
         }
-        g.sup.apply(Event::Initialized)?;
+        g.apply(Event::Initialized)?;
         Ok(())
     }
 
@@ -426,6 +454,7 @@ impl Engine {
                     a.commanded = position_steps as f64 / a.cfg.steps_per_unit;
                     let id = a.cfg.id.clone();
                     let pos = a.commanded;
+                    g.revision += 1;
                     let group_done = match g.homing.as_mut() {
                         Some(run) => {
                             run.pending.remove(&i);
@@ -436,7 +465,7 @@ impl Engine {
                     let more = g.homing.as_ref().is_some_and(|r| r.next < r.groups.len());
                     if group_done && !more {
                         g.homing = None;
-                        let _ = g.sup.apply(Event::HomingComplete);
+                        let _ = g.apply(Event::HomingComplete);
                     }
                     drop(g);
                     self.log("info", format!("axis {id} homed at {pos:.3}"));
@@ -456,7 +485,7 @@ impl Engine {
                         t.abort();
                     }
                     clear_motion(&mut g);
-                    let _ = g.sup.apply(Event::ConnectionLost);
+                    let _ = g.apply(Event::ConnectionLost);
                     return;
                 }
             }
@@ -472,7 +501,7 @@ impl Engine {
             a.homed = false;
             a.enabled = false;
         }
-        let _ = g.sup.apply(Event::Fault(f));
+        let _ = g.apply(Event::Fault(f));
         if let Some(l) = &g.link {
             // The MCU already disabled its drives for MCU-side faults; for
             // host-side faults make sure it does too.
@@ -574,7 +603,7 @@ impl Engine {
                 a.commanded = s.position_steps as f64 / a.cfg.steps_per_unit;
             }
         }
-        let _ = g.sup.apply(Event::MotionComplete);
+        let _ = g.apply(Event::MotionComplete);
     }
 
     // ------------------------------------------------------------------
@@ -638,7 +667,7 @@ impl Engine {
                 }
             })
             .collect();
-        let tool = self.chain.as_ref().map(|(c, order)| {
+        let tool = self.chain.as_deref().map(|(c, order)| {
             let q: Vec<f64> = order.iter().map(|&k| axes[k].measured_position).collect();
             let p = c.forward(&q);
             pb::ToolPose { position_mm: Some(vec3(p.position)), rotation_deg: Some(vec3(p.rpy_deg())) }
@@ -780,7 +809,7 @@ impl Engine {
             link.command(HostMsg::Enable { axis: a.channel }).await.map_err(ApiError::mcu)?;
         }
         let mut g = self.inner.lock().unwrap();
-        g.sup.apply(Event::Enable).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        g.apply(Event::Enable).map_err(|e| ApiError::invalid_state(e.to_string()))?;
         g.axes.iter_mut().for_each(|a| a.enabled = true);
         drop(g);
         self.log("info", "drives enabled");
@@ -818,7 +847,7 @@ impl Engine {
         clear_motion(&mut g);
         resync_from_mcu(&mut g, &link);
         g.axes.iter_mut().for_each(|a| a.enabled = false);
-        let _ = g.sup.apply(Event::Disable);
+        let _ = g.apply(Event::Disable);
         drop(g);
         self.log("info", "drives disabled");
         Ok(())
@@ -835,65 +864,111 @@ impl Engine {
         if !delta.is_finite() {
             return Err(ApiError::new("validation_failed", "delta must be finite"));
         }
-        let start = self.inner.lock().unwrap().axes[i].commanded;
-        self.start_move(i, start + delta, velocity, false).await
+        self.start_move(i, MoveTarget::Relative(delta), velocity).await
     }
 
     pub async fn move_to(&self, axis: &str, position: f64, velocity: Option<f64>) -> Result<(), ApiError> {
         let i = self.axis_index(axis)?;
-        self.start_move(i, position, velocity, true).await
+        self.start_move(i, MoveTarget::Absolute(position), velocity).await
     }
 
-    async fn start_move(&self, i: usize, target: f64, velocity: Option<f64>, absolute: bool) -> Result<(), ApiError> {
+    /// Run planning work off the engine lock, on a blocking worker, so
+    /// telemetry, Stop and E-stop are never held up by it.
+    async fn plan_off_lock<T: Send + 'static>(&self, plan: impl FnOnce() -> Result<T, ApiError> + Send + 'static) -> Result<T, ApiError> {
+        if !self.opts.planning_delay.is_zero() {
+            tokio::time::sleep(self.opts.planning_delay).await;
+        }
+        tokio::task::spawn_blocking(plan).await.map_err(|e| ApiError::new("internal", format!("planning task failed: {e}")))?
+    }
+
+    /// Commit a motion planned from the state at `revision`: refused if
+    /// anything that planning depended on changed meanwhile (another move,
+    /// Stop, a fault, homing, MCU reconnection); otherwise its segments are
+    /// placed on the MCU clock and queued.
+    fn commit(&self, revision: u64, planned: PlannedMotion) -> Result<(), ApiError> {
         let mut g = self.inner.lock().unwrap();
         g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        if g.revision != revision {
+            return Err(ApiError::invalid_state("the robot state changed while the move was planned; nothing was sent"));
+        }
         let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
-        let a = &g.axes[i];
-        let cfg = &a.cfg;
-        if absolute && !a.homed {
-            return Err(ApiError::new("not_homed", format!("axis {} must be homed before absolute moves", cfg.id)));
-        }
-        let mut limits = AxisLimits { min: cfg.min, max: cfg.max, max_velocity: cfg.max_velocity, max_acceleration: cfg.max_acceleration };
-        let mut velocity = velocity;
-        if !a.homed {
-            // Position unknown: allow relative jogs within one travel range
-            // of the power-on position, at reduced speed.
-            let range = cfg.max - cfg.min;
-            limits.min = -range;
-            limits.max = range;
-            let cap = cfg.max_velocity * UNHOMED_SPEED_FACTOR;
-            limits.max_velocity = cap;
-            velocity = Some(velocity.unwrap_or(cap).min(cap));
-        }
-        // Self-collision check: only meaningful once every position is known.
-        if let Some((model, order)) = &self.collision {
-            if g.axes.iter().all(|x| x.homed) {
-                let q: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
-                let mi = order.iter().position(|&k| k == i).expect("every axis is in the model");
-                let to = if absolute { target } else { target.clamp(cfg.min, cfg.max) };
-                if let Err(c) = model.check_sweep(&q, mi, to) {
-                    let at = c.at[mi];
-                    return Err(ApiError::new(
-                        "collision",
-                        format!("refused: {c} when {} reaches {at:.1} {}", cfg.id, if a.cfg.kind == JointKind::Prismatic { "mm" } else { "deg" }),
-                    ));
-                }
-            }
-        }
-        let profile = plan_axis_move(a.commanded, target, velocity, &limits).map_err(motion_err)?;
-        if profile.duration() == 0.0 {
-            return Ok(());
-        }
         let start_us = link.mcu_now_us() + LEAD_US;
-        let segs = to_segments(&profile, cfg.channel, cfg.steps_per_unit, start_us, MAX_SEGMENT_US);
-        let id = cfg.id.clone();
-        g.sup.apply(Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
-        g.last_end_us = segs.last().map(|s| s.end_us()).unwrap_or(start_us);
-        g.pending.extend(segs);
-        g.axes[i].commanded = target;
+        let segs = planned
+            .segs
+            .into_iter()
+            .map(|mut s| {
+                s.start_us += start_us;
+                s
+            })
+            .collect();
+        self.start_planned(&mut g, segs, start_us, &planned.ends)?;
         drop(g);
-        self.log("debug", format!("move {id} -> {target:.3} ({:.3} s)", profile.duration()));
+        self.log("debug", planned.log);
         Ok(())
+    }
+
+    async fn start_move(&self, i: usize, target: MoveTarget, velocity: Option<f64>) -> Result<(), ApiError> {
+        let cfg = self.robot.file.axes[i].clone();
+        let relative = matches!(target, MoveTarget::Relative(_));
+        let (revision, start, target, limits, velocity, pose) = {
+            let g = self.inner.lock().unwrap();
+            g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+            g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+            let a = &g.axes[i];
+            if matches!(target, MoveTarget::Absolute(_)) && !a.homed {
+                return Err(ApiError::new("not_homed", format!("axis {} must be homed before absolute moves", cfg.id)));
+            }
+            let mut limits = AxisLimits { min: cfg.min, max: cfg.max, max_velocity: cfg.max_velocity, max_acceleration: cfg.max_acceleration };
+            let mut velocity = velocity;
+            if !a.homed {
+                // Position unknown: allow relative jogs within one travel range
+                // of the power-on position, at reduced speed.
+                let range = cfg.max - cfg.min;
+                limits.min = -range;
+                limits.max = range;
+                let cap = cfg.max_velocity * UNHOMED_SPEED_FACTOR;
+                limits.max_velocity = cap;
+                velocity = Some(velocity.unwrap_or(cap).min(cap));
+            }
+            let target = match target {
+                MoveTarget::Absolute(p) => p,
+                MoveTarget::Relative(d) => a.commanded + d,
+            };
+            // The collision check needs every position, so only once all are homed.
+            let pose: Option<Vec<f64>> = g.axes.iter().all(|x| x.homed).then(|| g.axes.iter().map(|x| x.commanded).collect());
+            (g.revision, a.commanded, target, limits, velocity, pose)
+        };
+        let collision = self.collision.clone();
+        let planned = self
+            .plan_off_lock(move || {
+                if let (Some(m), Some(pose)) = (&collision, &pose) {
+                    let (model, order) = m.as_ref();
+                    let q: Vec<f64> = order.iter().map(|&k| pose[k]).collect();
+                    let mi = order.iter().position(|&k| k == i).expect("every axis is in the model");
+                    let to = if relative { target.clamp(cfg.min, cfg.max) } else { target };
+                    if let Err(c) = model.check_sweep(&q, mi, to) {
+                        let at = c.at[mi];
+                        return Err(ApiError::new(
+                            "collision",
+                            format!("refused: {c} when {} reaches {at:.1} {}", cfg.id, if cfg.kind == JointKind::Prismatic { "mm" } else { "deg" }),
+                        ));
+                    }
+                }
+                let profile = plan_axis_move(start, target, velocity, &limits).map_err(motion_err)?;
+                if profile.duration() == 0.0 {
+                    return Ok(None);
+                }
+                Ok(Some(PlannedMotion {
+                    segs: to_segments(&profile, cfg.channel, cfg.steps_per_unit, 0, MAX_SEGMENT_US),
+                    ends: vec![(i, target)],
+                    log: format!("move {} -> {target:.3} ({:.3} s)", cfg.id, profile.duration()),
+                }))
+            })
+            .await?;
+        match planned {
+            Some(p) => self.commit(revision, p),
+            None => Ok(()),
+        }
     }
 
     /// Coordinated joint move (MoveJ): every listed axis starts and finishes
@@ -918,78 +993,76 @@ impl Engine {
         if !(scale.is_finite() && scale > 0.0 && scale <= 1.0) {
             return Err(ApiError::new("validation_failed", "speed_scale must be in (0, 1]"));
         }
-
-        let mut g = self.inner.lock().unwrap();
-        g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
-        let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
-        if let Some(&i) = idx.iter().find(|&&i| !g.axes[i].homed) {
-            return Err(ApiError::new("not_homed", format!("axis {} must be homed before a joint move", g.axes[i].cfg.id)));
-        }
+        let axes: Vec<AxisSection> = self.robot.file.axes.clone();
         let goals: Vec<f64> = targets.iter().map(|(_, p)| *p).collect();
         for (&i, &t) in idx.iter().zip(&goals) {
-            let c = &g.axes[i].cfg;
+            let c = &axes[i];
             if t < c.min || t > c.max {
                 return Err(ApiError::new("validation_failed", format!("target {t} of {} outside limits [{}, {}]", c.id, c.min, c.max)));
             }
         }
-        let starts: Vec<f64> = idx.iter().map(|&i| g.axes[i].commanded).collect();
-        let limits: Vec<AxisLimits> = idx
-            .iter()
-            .map(|&i| {
-                let c = &g.axes[i].cfg;
-                AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
-            })
-            .collect();
-        let profiles = plan_synchronized_scaled(&starts, &goals, &limits, scale).map_err(motion_err)?;
-        let duration = profiles.iter().map(|p| p.duration()).fold(0.0, f64::max);
-        if duration == 0.0 {
-            return Ok(());
-        }
-        // Self-collision check along the whole joint-space path, once every
-        // axis is homed (the model needs the full pose).
-        if let Some((model, order)) = &self.collision {
-            if g.axes.iter().all(|x| x.homed) {
-                let target_of = |k: usize| idx.iter().position(|&i| i == k).map_or(g.axes[k].commanded, |n| goals[n]);
-                let from: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
-                let to: Vec<f64> = order.iter().map(|&k| target_of(k)).collect();
-                if let Err(c) = model.check_path(&from, &to) {
-                    let at: Vec<String> =
-                        order.iter().enumerate().filter(|(_, k)| idx.contains(k)).map(|(m, &k)| format!("{} {:.1}", g.axes[k].cfg.id, c.at[m])).collect();
-                    return Err(ApiError::new("collision", format!("refused: {c} at {}", at.join(", "))));
+        let (revision, pose, all_homed) = {
+            let g = self.inner.lock().unwrap();
+            g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+            g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+            if let Some(&i) = idx.iter().find(|&&i| !g.axes[i].homed) {
+                return Err(ApiError::new("not_homed", format!("axis {} must be homed before a joint move", g.axes[i].cfg.id)));
+            }
+            (g.revision, g.axes.iter().map(|a| a.commanded).collect::<Vec<f64>>(), g.axes.iter().all(|a| a.homed))
+        };
+        let collision = self.collision.clone();
+        let planned = self
+            .plan_off_lock(move || {
+                let starts: Vec<f64> = idx.iter().map(|&i| pose[i]).collect();
+                let limits: Vec<AxisLimits> = idx.iter().map(|&i| axis_limits(&axes[i])).collect();
+                let profiles = plan_synchronized_scaled(&starts, &goals, &limits, scale).map_err(motion_err)?;
+                let duration = profiles.iter().map(|p| p.duration()).fold(0.0, f64::max);
+                if duration == 0.0 {
+                    return Ok(None);
                 }
-            }
+                // Self-collision check along the whole joint-space path, once
+                // every axis is homed (the model needs the full pose).
+                if let (Some(m), true) = (&collision, all_homed) {
+                    let (model, order) = m.as_ref();
+                    let target_of = |k: usize| idx.iter().position(|&i| i == k).map_or(pose[k], |n| goals[n]);
+                    let from: Vec<f64> = order.iter().map(|&k| pose[k]).collect();
+                    let to: Vec<f64> = order.iter().map(|&k| target_of(k)).collect();
+                    if let Err(c) = model.check_path(&from, &to) {
+                        let at: Vec<String> =
+                            order.iter().enumerate().filter(|(_, k)| idx.contains(k)).map(|(m, &k)| format!("{} {:.1}", axes[k].id, c.at[m])).collect();
+                        return Err(ApiError::new("collision", format!("refused: {c} at {}", at.join(", "))));
+                    }
+                }
+                // One time grid for every axis: the profiles share their phase
+                // times, so their segments start and end at the same instants.
+                let mut segs: Vec<Segment> = Vec::new();
+                for (p, &i) in profiles.iter().zip(&idx) {
+                    if p.distance != 0.0 {
+                        segs.extend(to_segments(p, axes[i].channel, axes[i].steps_per_unit, 0, MAX_SEGMENT_US));
+                    }
+                }
+                if segs.is_empty() {
+                    return Ok(None);
+                }
+                let summary: Vec<String> = idx.iter().zip(&goals).map(|(&i, t)| format!("{} {t:.2}", axes[i].id)).collect();
+                Ok(Some(PlannedMotion {
+                    segs,
+                    ends: idx.iter().copied().zip(goals.iter().copied()).collect(),
+                    log: format!("move_j {} ({duration:.3} s at {:.0}% speed)", summary.join(", "), scale * 100.0),
+                }))
+            })
+            .await?;
+        match planned {
+            Some(p) => self.commit(revision, p),
+            None => Ok(()),
         }
-        // One time grid for every axis: the profiles share their phase
-        // times, so their segments start and end at the same instants.
-        let start_us = link.mcu_now_us() + LEAD_US;
-        let mut segs: Vec<Segment> = Vec::new();
-        for (p, &i) in profiles.iter().zip(&idx) {
-            if p.distance != 0.0 {
-                let c = &g.axes[i].cfg;
-                segs.extend(to_segments(p, c.channel, c.steps_per_unit, start_us, MAX_SEGMENT_US));
-            }
-        }
-        if segs.is_empty() {
-            return Ok(());
-        }
-        segs.sort_by_key(|s| (s.start_us, s.axis));
-        g.sup.apply(Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
-        g.last_end_us = segs.iter().map(|s| s.end_us()).max().unwrap_or(start_us);
-        g.pending.extend(segs);
-        for (&i, &t) in idx.iter().zip(&goals) {
-            g.axes[i].commanded = t;
-        }
-        let summary: Vec<String> = idx.iter().zip(&goals).map(|(&i, t)| format!("{} {t:.2}", g.axes[i].cfg.id)).collect();
-        drop(g);
-        self.log("debug", format!("move_j {} ({duration:.3} s at {:.0}% speed)", summary.join(", "), scale * 100.0));
-        Ok(())
     }
 
     /// Queue planned segments as one motion: time order across axes, state
     /// to running, commanded positions to the move's end.
     fn start_planned(&self, g: &mut Inner, mut segs: Vec<Segment>, start_us: u64, ends: &[(usize, f64)]) -> Result<(), ApiError> {
         segs.sort_by_key(|s| (s.start_us, s.axis));
-        g.sup.apply(Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        g.apply(Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
         g.last_end_us = segs.iter().map(|s| s.end_us()).max().unwrap_or(start_us);
         g.pending.extend(segs);
         for &(i, p) in ends {
@@ -1032,81 +1105,89 @@ impl Engine {
         if !(scale.is_finite() && scale > 0.0 && scale <= 1.0) {
             return Err(ApiError::new("validation_failed", "speed_scale must be in (0, 1]"));
         }
-
-        let mut g = self.inner.lock().unwrap();
-        g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
-        let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
-        if let Some(&i) = used.iter().find(|&&i| !g.axes[i].homed) {
-            return Err(ApiError::new("not_homed", format!("axis {} must be homed before a joint path", g.axes[i].cfg.id)));
-        }
-        // Full joint vectors of the used axes, waypoint by waypoint.
-        let mut wps: Vec<Vec<f64>> = vec![used.iter().map(|&i| g.axes[i].commanded).collect()];
+        let axes: Vec<AxisSection> = self.robot.file.axes.clone();
         for (n, r) in resolved.iter().enumerate() {
-            let mut next = wps.last().unwrap().clone();
             for &(i, p) in r {
-                let c = &g.axes[i].cfg;
+                let c = &axes[i];
                 if p < c.min || p > c.max {
                     return Err(ApiError::new(
                         "validation_failed",
                         format!("waypoint {}: target {p} of {} outside limits [{}, {}]", n + 1, c.id, c.min, c.max),
                     ));
                 }
-                next[used.iter().position(|&k| k == i).unwrap()] = p;
             }
-            wps.push(next);
         }
-        let limits: Vec<AxisLimits> = used
-            .iter()
-            .map(|&i| {
-                let c = &g.axes[i].cfg;
-                AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
-            })
-            .collect();
-        let profiles = plan_blended(&wps, &limits, scale).map_err(motion_err)?;
-        let duration = profiles.first().map_or(0.0, |p| p.duration());
-        if duration == 0.0 {
-            return Ok(());
-        }
-        // Collision check of the rounded path, sampled finely in time.
-        if let Some((model, order)) = &self.collision {
-            if g.axes.iter().all(|x| x.homed) {
-                let pose_at = |t: f64| -> Vec<f64> {
-                    order.iter().map(|&k| used.iter().position(|&i| i == k).map_or(g.axes[k].commanded, |n| profiles[n].position(t))).collect()
-                };
-                let steps = ((duration / 0.005).ceil() as usize).max(1);
-                let mut prev = pose_at(0.0);
-                for k in 1..=steps {
-                    let t = duration * k as f64 / steps as f64;
-                    let cur = pose_at(t);
-                    if let Err(c) = model.check_path(&prev, &cur) {
-                        return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the path", 100.0 * t / duration)));
+        let (revision, pose, all_homed) = {
+            let g = self.inner.lock().unwrap();
+            g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+            g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+            if let Some(&i) = used.iter().find(|&&i| !g.axes[i].homed) {
+                return Err(ApiError::new("not_homed", format!("axis {} must be homed before a joint path", g.axes[i].cfg.id)));
+            }
+            (g.revision, g.axes.iter().map(|a| a.commanded).collect::<Vec<f64>>(), g.axes.iter().all(|a| a.homed))
+        };
+        let collision = self.collision.clone();
+        let count = waypoints.len();
+        let planned = self
+            .plan_off_lock(move || {
+                // Full joint vectors of the used axes, waypoint by waypoint.
+                let mut wps: Vec<Vec<f64>> = vec![used.iter().map(|&i| pose[i]).collect()];
+                for r in &resolved {
+                    let mut next = wps.last().unwrap().clone();
+                    for &(i, p) in r {
+                        next[used.iter().position(|&k| k == i).unwrap()] = p;
                     }
-                    prev = cur;
+                    wps.push(next);
                 }
-            }
+                let limits: Vec<AxisLimits> = used.iter().map(|&i| axis_limits(&axes[i])).collect();
+                let profiles = plan_blended(&wps, &limits, scale).map_err(motion_err)?;
+                let duration = profiles.first().map_or(0.0, |p| p.duration());
+                if duration == 0.0 {
+                    return Ok(None);
+                }
+                // Collision check of the rounded path, sampled finely in time.
+                if let (Some(m), true) = (&collision, all_homed) {
+                    let (model, order) = m.as_ref();
+                    let pose_at = |t: f64| -> Vec<f64> {
+                        order.iter().map(|&k| used.iter().position(|&i| i == k).map_or(pose[k], |n| profiles[n].position(t))).collect()
+                    };
+                    let steps = ((duration / 0.005).ceil() as usize).max(1);
+                    let mut prev = pose_at(0.0);
+                    for k in 1..=steps {
+                        let t = duration * k as f64 / steps as f64;
+                        let cur = pose_at(t);
+                        if let Err(c) = model.check_path(&prev, &cur) {
+                            return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the path", 100.0 * t / duration)));
+                        }
+                        prev = cur;
+                    }
+                }
+                let mut segs = Vec::new();
+                for (p, &i) in profiles.iter().zip(&used) {
+                    let (lo, hi) = p.range();
+                    if hi - lo > 0.0 {
+                        segs.extend(to_segments(p, axes[i].channel, axes[i].steps_per_unit, 0, MAX_SEGMENT_US));
+                    }
+                }
+                if segs.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(PlannedMotion {
+                    segs,
+                    ends: used.iter().copied().zip(wps.last().unwrap().iter().copied()).collect(),
+                    log: format!("move_j_path {count} waypoints ({duration:.3} s at {:.0}% speed)", scale * 100.0),
+                }))
+            })
+            .await?;
+        match planned {
+            Some(p) => self.commit(revision, p),
+            None => Ok(()),
         }
-        let start_us = link.mcu_now_us() + LEAD_US;
-        let mut segs = Vec::new();
-        for (p, &i) in profiles.iter().zip(&used) {
-            let (lo, hi) = p.range();
-            if hi - lo > 0.0 {
-                let c = &g.axes[i].cfg;
-                segs.extend(to_segments(p, c.channel, c.steps_per_unit, start_us, MAX_SEGMENT_US));
-            }
-        }
-        if segs.is_empty() {
-            return Ok(());
-        }
-        let ends: Vec<(usize, f64)> = used.iter().zip(wps.last().unwrap()).map(|(&i, &p)| (i, p)).collect();
-        self.start_planned(&mut g, segs, start_us, &ends)?;
-        drop(g);
-        self.log("debug", format!("move_j_path {} waypoints ({duration:.3} s at {:.0}% speed)", waypoints.len(), scale * 100.0));
-        Ok(())
     }
 
     /// Cartesian straight-line move of the tool point (MoveL).
     pub async fn move_l(&self, position: [f64; 3], rotation_deg: Option<[f64; 3]>, speed_mm_s: Option<f64>, speed_scale: Option<f64>) -> Result<(), ApiError> {
-        let Some((chain, order)) = &self.chain else {
+        let Some(chain) = self.chain.clone() else {
             return Err(ApiError::new("bad_request", "MoveL needs a robot profile whose geometry is a single serial chain"));
         };
         if position.iter().chain(rotation_deg.iter().flatten()).any(|v| !v.is_finite()) {
@@ -1120,79 +1201,83 @@ impl Engine {
         if !(scale.is_finite() && scale > 0.0 && scale <= 1.0) {
             return Err(ApiError::new("validation_failed", "speed_scale must be in (0, 1]"));
         }
-        // Snapshot under the lock, plan without it.
-        let (q0, limits) = {
+        let axes: Vec<AxisSection> = self.robot.file.axes.clone();
+        let (revision, pose) = {
             let g = self.inner.lock().unwrap();
             g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
             g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
             if let Some(a) = g.axes.iter().find(|a| !a.homed) {
                 return Err(ApiError::new("not_homed", format!("axis {} must be homed before a Cartesian move", a.cfg.id)));
             }
-            let q0: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
-            let limits: Vec<AxisLimits> = order
-                .iter()
-                .map(|&k| {
-                    let c = &g.axes[k].cfg;
-                    AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
-                })
-                .collect();
-            (q0, limits)
+            (g.revision, g.axes.iter().map(|a| a.commanded).collect::<Vec<f64>>())
         };
-        let start = chain.forward(&q0);
-        let target = match rotation_deg {
-            Some(r) if chain.controls_orientation() => pose_from(position, r),
-            _ => ToolPose { position, rotation: start.rotation },
-        };
-        let dist = (0..3).map(|k| (target.position[k] - start.position[k]).powi(2)).sum::<f64>().sqrt();
-        let turn = {
-            let r = &target.rotation;
-            let s = &start.rotation;
-            // Angle of r·sᵀ.
-            let tr: f64 = (0..3).map(|i| (0..3).map(|k| r[i][k] * s[i][k]).sum::<f64>()).sum();
-            ((tr - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
-        };
-        if dist < 1e-3 && turn < 1e-3 {
-            return Ok(());
-        }
-        let path = chain.linear_path(&q0, &target, LINE_STEP_MM, LINE_STEP_DEG).map_err(|e| ApiError::new("validation_failed", format!("refused: {e}")))?;
-        if let Some((model, _)) = &self.collision {
-            // Same joint order as the chain (both from the profile geometry).
-            for (k, w) in path.windows(2).enumerate() {
-                if let Err(c) = model.check_path(&w[0], &w[1]) {
-                    return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the line", 100.0 * (k + 1) as f64 / (path.len() - 1) as f64)));
+        let collision = self.collision.clone();
+        let planned = self
+            .plan_off_lock(move || {
+                let (chain, order) = chain.as_ref();
+                let q0: Vec<f64> = order.iter().map(|&k| pose[k]).collect();
+                let limits: Vec<AxisLimits> = order.iter().map(|&k| axis_limits(&axes[k])).collect();
+                let start = chain.forward(&q0);
+                let target = match rotation_deg {
+                    Some(r) if chain.controls_orientation() => pose_from(position, r),
+                    _ => ToolPose { position, rotation: start.rotation },
+                };
+                let dist = (0..3).map(|k| (target.position[k] - start.position[k]).powi(2)).sum::<f64>().sqrt();
+                let turn = {
+                    let r = &target.rotation;
+                    let s = &start.rotation;
+                    // Angle of r·sᵀ.
+                    let tr: f64 = (0..3).map(|i| (0..3).map(|k| r[i][k] * s[i][k]).sum::<f64>()).sum();
+                    ((tr - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
+                };
+                if dist < 1e-3 && turn < 1e-3 {
+                    return Ok(None);
                 }
-            }
+                let path =
+                    chain.linear_path(&q0, &target, LINE_STEP_MM, LINE_STEP_DEG).map_err(|e| ApiError::new("validation_failed", format!("refused: {e}")))?;
+                if let Some(m) = &collision {
+                    // Same joint order as the chain (both from the profile geometry).
+                    let (model, _) = m.as_ref();
+                    for (k, w) in path.windows(2).enumerate() {
+                        if let Err(c) = model.check_path(&w[0], &w[1]) {
+                            return Err(ApiError::new(
+                                "collision",
+                                format!("refused: {c} at {:.0} % of the line", 100.0 * (k + 1) as f64 / (path.len() - 1) as f64),
+                            ));
+                        }
+                    }
+                }
+                let s_speed =
+                    [(dist > 1e-9).then(|| speed / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
+                let s_accel = [(dist > 1e-9).then(|| LINE_ACCEL_MM_S2 / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S2 / turn)]
+                    .into_iter()
+                    .flatten()
+                    .fold(f64::INFINITY, f64::min);
+                let traj = time_scale(&path, &limits, scale, s_speed, s_accel).map_err(motion_err)?;
+                let mut segs = Vec::new();
+                for (j, &k) in order.iter().enumerate() {
+                    segs.extend(traj.segments(j, axes[k].channel, axes[k].steps_per_unit, 0));
+                }
+                if segs.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some(PlannedMotion {
+                    segs,
+                    ends: order.iter().copied().zip(path.last().unwrap().iter().copied()).collect(),
+                    log: format!(
+                        "move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s",
+                        position[0],
+                        position[1],
+                        position[2],
+                        traj.duration()
+                    ),
+                }))
+            })
+            .await?;
+        match planned {
+            Some(p) => self.commit(revision, p),
+            None => Ok(()),
         }
-        let s_speed = [(dist > 1e-9).then(|| speed / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
-        let s_accel = [(dist > 1e-9).then(|| LINE_ACCEL_MM_S2 / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S2 / turn)]
-            .into_iter()
-            .flatten()
-            .fold(f64::INFINITY, f64::min);
-        let traj = time_scale(&path, &limits, scale, s_speed, s_accel).map_err(motion_err)?;
-
-        let mut g = self.inner.lock().unwrap();
-        g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
-        if order.iter().zip(&q0).any(|(&k, &q)| g.axes[k].commanded != q) || g.axes.iter().any(|a| !a.homed) {
-            return Err(ApiError::invalid_state("the robot moved while the line was planned"));
-        }
-        let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
-        let start_us = link.mcu_now_us() + LEAD_US;
-        let mut segs = Vec::new();
-        for (j, &k) in order.iter().enumerate() {
-            let c = &g.axes[k].cfg;
-            segs.extend(traj.segments(j, c.channel, c.steps_per_unit, start_us));
-        }
-        if segs.is_empty() {
-            return Ok(());
-        }
-        let ends: Vec<(usize, f64)> = order.iter().zip(path.last().unwrap()).map(|(&k, &p)| (k, p)).collect();
-        self.start_planned(&mut g, segs, start_us, &ends)?;
-        drop(g);
-        self.log(
-            "debug",
-            format!("move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s", position[0], position[1], position[2], traj.duration()),
-        );
-        Ok(())
     }
 
     pub async fn home(&self, axis: &str) -> Result<(), ApiError> {
@@ -1220,7 +1305,7 @@ impl Engine {
         self.link()?;
         {
             let mut g = self.inner.lock().unwrap();
-            g.sup.apply(Event::StartHoming).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+            g.apply(Event::StartHoming).map_err(|e| ApiError::invalid_state(e.to_string()))?;
             g.homing = Some(HomingRun { groups, next: 0, pending: BTreeSet::new() });
         }
         self.start_homing_group().await
@@ -1273,8 +1358,8 @@ impl Engine {
             if g.sup.state() == RobotState::Homing {
                 // A stopped homing cycle leaves the axis un-homed; the
                 // supervisor returns to ready once the MCU is idle.
-                let _ = g.sup.apply(Event::HomingComplete);
-                let _ = g.sup.apply(Event::StartMotion);
+                let _ = g.apply(Event::HomingComplete);
+                let _ = g.apply(Event::StartMotion);
             }
             link.submit(HostMsg::Stop).map_err(ApiError::mcu)?
         };
@@ -1293,7 +1378,7 @@ impl Engine {
                 a.homed = false;
                 a.enabled = false;
             }
-            let _ = g.sup.apply(Event::EmergencyStop);
+            let _ = g.apply(Event::EmergencyStop);
             g.link.clone()
         };
         if let Some(l) = link {
@@ -1326,7 +1411,7 @@ impl Engine {
         if let Some(l) = &link {
             resync_from_mcu(&mut g, l);
         }
-        g.sup.apply(Event::ResetFault { connected: link.is_some() }).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        g.apply(Event::ResetFault { connected: link.is_some() }).map_err(|e| ApiError::invalid_state(e.to_string()))?;
         drop(g);
         self.log("info", "fault reset — drives remain disabled, axes must be re-homed");
         Ok(())
@@ -1424,14 +1509,27 @@ async fn fresh_status(link: &McuLink, timeout: Duration, ok: impl Fn(&Status) ->
     }
 }
 
+impl Inner {
+    /// Supervisor transition that also invalidates in-flight motion plans.
+    fn apply(&mut self, event: Event) -> Result<RobotState, motioncore_safety::TransitionError> {
+        let r = self.sup.apply(event);
+        if r.is_ok() {
+            self.revision += 1;
+        }
+        r
+    }
+}
+
 fn clear_motion(g: &mut Inner) {
     g.pending.clear();
     g.in_flight.clear();
     g.last_end_us = 0;
     g.motion_gen += 1;
+    g.revision += 1;
 }
 
 fn resync_from_mcu(g: &mut Inner, link: &McuLink) {
+    g.revision += 1;
     if let Some(st) = link.latest_status() {
         for a in g.axes.iter_mut() {
             if let Some(s) = st.axes.get(a.cfg.channel as usize) {

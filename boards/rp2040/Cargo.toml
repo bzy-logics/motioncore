@@ -13,6 +13,11 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[features]
+# Bench test of the panic safe state: a spare input tied to GND makes the
+# firmware panic in the next motion tick. Never enable in production builds.
+bench-panic = []
+
 [dependencies]
 motioncore-firmware-core = { workspace = true }
 motioncore-firmware-pio-step = { workspace = true }
@@ -21,7 +26,6 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 critical-section = "1"
 embedded-hal = "1"
-panic-halt = "1"
 rp2040-hal = { version = "0.12", features = ["rt", "critical-section-impl", "rom-func-cache"] }
 rp2040-boot2 = "0.3"
 usb-device = "0.3"
