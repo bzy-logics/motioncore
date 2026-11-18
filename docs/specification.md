@@ -116,7 +116,7 @@ For v0.1, web extensions can be declarative panels rather than arbitrary third-p
 ```toml
 id = "org.motioncore.kinematics.articulated6"
 version = "0.1.0"
-api_version = "1"
+api_version = "0"
 entrypoint = "plugin.wasm"
 provides = ["kinematics.fk", "kinematics.ik"]
 requires = ["robot.joint_model"]

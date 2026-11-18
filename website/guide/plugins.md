@@ -55,7 +55,7 @@ plugins/
 ```toml
 id = "org.example.kinematics.articulated6"   # reverse-DNS, lowercase
 version = "0.1.0"                            # semver
-api_version = "1"                            # must equal the engine's plugin API version
+api_version = "0"                            # must equal the engine's plugin API version
 kind = "wasm"
 description = "6-DOF articulated arm kinematics"
 entrypoint = "plugin.wasm"                   # relative, inside the plugin directory

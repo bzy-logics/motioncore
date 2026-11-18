@@ -127,7 +127,7 @@ fn wasm_manifests_are_validated_from_disk() {
     let sum = hex(&sha256(b"\0asm\x01\0\0\0"));
     std::fs::write(
         p.join("plugin.toml"),
-        format!("id = \"org.t.kin\"\nversion = \"0.1.0\"\napi_version = \"1\"\nkind = \"wasm\"\nentrypoint = \"plugin.wasm\"\nsha256 = \"{sum}\"\nprovides = [\"kinematics.fk\"]\n"),
+        format!("id = \"org.t.kin\"\nversion = \"0.1.0\"\napi_version = \"0\"\nkind = \"wasm\"\nentrypoint = \"plugin.wasm\"\nsha256 = \"{sum}\"\nprovides = [\"kinematics.fk\"]\n"),
     )
     .unwrap();
     let bad = dir.join("bad");
@@ -135,7 +135,7 @@ fn wasm_manifests_are_validated_from_disk() {
     std::fs::write(bad.join("plugin.wasm"), b"x").unwrap();
     std::fs::write(
         bad.join("plugin.toml"),
-        "id = \"org.t.bad\"\nversion = \"0.1.0\"\napi_version = \"1\"\nkind = \"wasm\"\nentrypoint = \"plugin.wasm\"\nsha256 = \"00\"\nprovides = [\"x\"]\n",
+        "id = \"org.t.bad\"\nversion = \"0.1.0\"\napi_version = \"0\"\nkind = \"wasm\"\nentrypoint = \"plugin.wasm\"\nsha256 = \"00\"\nprovides = [\"x\"]\n",
     )
     .unwrap();
 

@@ -58,4 +58,6 @@ The browser-facing API is owned by ratavyr and versioned separately (v1). See th
 
 ## Plugin API
 
-Each manifest declares `api_version`, which must equal the engine's plugin API version (`motioncore info` prints it).
+Each manifest declares `api_version`, which must equal the engine's plugin API version exactly (`motioncore info` prints it). It changes only on breaking changes to `crates/plugin-sdk`.
+
+It is `"0"` while the plugin interface is unstable: so far it covers the manifest and the `activate` / `deactivate` lifecycle, and WASM plugins are not executed yet. `"1"` will mark the first stable interface. It was `"1"` before; only builtin plugins existed then, so no manifest outside this repository was affected.
