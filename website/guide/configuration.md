@@ -127,7 +127,7 @@ tip = [200.0, 0.0, 0.0]       # optional: end of this joint's link (e.g. tool fl
 radius = 20.0                 # optional: link thickness, mm; enables collision checking
 ```
 
-Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Motion is still commanded one axis at a time. Requires engine API 1.1 (`radius`: 1.2).
+Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Motion is still commanded one axis at a time. Requires engine API 0.1.3 (`radius`: 0.1.4).
 
 ![A two-link arm on a linear rail, drawn from its geometry in sindrava](/screenshots/rail-arm-viewer.png)
 
@@ -149,7 +149,7 @@ groups = [["j4", "j5", "j6"], ["j1", "j2", "j3"]]  # a group homes together; gro
 start_pose = "Arm straight up with every joint at its zero mark."  # shown before homing
 ```
 
-Every homeable axis must be in exactly one group. The next group starts when every axis of the current one has reached its switch; a fault, Stop or E-stop ends the plan. Because joint positions are unknown until each switch triggers, no software can check homing paths: design the groups for a known start pose (simulate the paths from it) and describe that pose in `start_pose`, which clients show before homing. Requires engine API 1.2.
+Every homeable axis must be in exactly one group. The next group starts when every axis of the current one has reached its switch; a fault, Stop or E-stop ends the plan. Because joint positions are unknown until each switch triggers, no software can check homing paths: design the groups for a known start pose (simulate the paths from it) and describe that pose in `start_pose`, which clients show before homing. Requires engine API 0.1.4.
 
 #### Example: a six-axis desktop arm
 

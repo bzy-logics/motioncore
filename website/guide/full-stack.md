@@ -84,7 +84,7 @@ ratavyr speaks plain HTTP. Across a network, put it behind a TLS-terminating rev
 
 | Link | Rule |
 |---|---|
-| ratavyr ↔ engine | Engine `api_version` must be `1.x`. Otherwise ratavyr reports the reason in `/api/info` → `engine_error` and returns `503 engine_unavailable`. |
+| ratavyr ↔ engine | Engine `api_version` must have the same `0.MINOR` as the contract ratavyr was built against (`0.1.x`). Otherwise ratavyr reports the reason in `/api/info` → `engine_error` and returns `503 engine_unavailable`. |
 | sindrava ↔ ratavyr | REST API v1. sindrava also works with ratavyr < 0.3 (no `/api/session` or `/api/ws-tickets`): permissions are unknown and the WebSocket falls back to `?access_token=`. |
 | engine ↔ MCU | Protocol version must match exactly; the engine refuses the MCU otherwise. |
 

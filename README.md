@@ -119,9 +119,10 @@ created yet; they arrive with the first encoder/GPIO feature.
 
 `crates/engine-api/proto/motioncore/engine/v1/engine.proto` is the single
 source of truth (services `EngineService` and `FirmwareService`). Releases
-are git tags `engine-api/vX.Y.Z`; `ratavyr` generates its Go
-bindings from a pinned tag and verifies the file's SHA-256. Rules: v1 changes
-are additive only; breaking changes get a new `motioncore.engine.v2` package.
+are git tags `engine-api/v0.MINOR.PATCH`; `ratavyr` generates its Go
+bindings from a pinned tag and verifies the file's SHA-256. While pre-1.0,
+PATCH releases are additive only; breaking changes and major features bump
+MINOR, and clients accept an engine with the same `0.MINOR`.
 Print the contract a binary was built with: `motioncore engine-api proto`.
 
 ## Tests

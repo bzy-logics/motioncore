@@ -8,13 +8,13 @@ the open decisions (§16) settled so far — provisionally.
 | Boundary | Contract | Owner | Versioning |
 |---|---|---|---|
 | web ↔ server | REST + WebSocket (`ratavyr/docs/rest-api.md`) | ratavyr | v1 |
-| server/CLI ↔ engine | gRPC `motioncore.engine.v1` (`crates/engine-api`) | motioncore | tag `engine-api/vX.Y.Z`, additive within v1 |
+| server/CLI ↔ engine | gRPC `motioncore.engine.v1` (`crates/engine-api`) | motioncore | tag `engine-api/v0.MINOR.PATCH`, additive within a `0.MINOR` |
 | engine ↔ MCU | binary protocol (`crates/protocol`) | motioncore | `PROTOCOL_VERSION`, checked at handshake |
 | engine ↔ plugins | `crates/plugin-sdk` | motioncore | `API_VERSION`, checked per manifest |
 
 Incompatible peers fail safely: the engine refuses an MCU with another
 protocol version or missing capabilities; the server and CLI refuse an engine
-whose `api_version` is not `1.x`; the plugin runtime refuses manifests with
+whose `api_version` has a different `0.MINOR`; the plugin runtime refuses manifests with
 another API version.
 
 The engine listens on a Unix socket on Linux (`unix:///run/motioncore/engine.sock`)
