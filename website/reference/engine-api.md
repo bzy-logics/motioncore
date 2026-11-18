@@ -50,6 +50,8 @@ Positions, deltas and velocities are in the axis display unit (`deg` or `mm`).
 | `MoveTo` | `axis`, `position`, optional `velocity` | `CommandResponse` | Axis must be homed |
 | `Home` | `axis` | `CommandResponse` | |
 | `MoveJ` | `targets` (repeated `JointTarget`: `axis`, `position`), optional `speed_scale` | `CommandResponse` | Since 0.2.0. Listed axes start and finish together on a straight joint-space line; all must be homed; `speed_scale` in (0, 1], default 1. Errors: `bad_request` (no targets, axis twice), `validation_failed`, `not_homed`, `collision` |
+| `MoveJPath` | `waypoints` (repeated `JointWaypoint`: `targets`), optional `speed_scale` | `CommandResponse` | Since 0.3.0. Through the waypoints without stopping at intermediate ones (corners rounded); unlisted axes keep the previous waypoint's value; at most 256. Errors as `MoveJ`; messages name the waypoint |
+| `MoveL` | `position_mm` (`Vec3`), optional `rotation_deg` (`Vec3`), optional `speed_mm_s`, optional `speed_scale` | `CommandResponse` | Since 0.3.0. Straight line of the tool point; orientation held unless given (six joints or more). Needs a serial-chain geometry (`bad_request` otherwise) and all axes homed. `speed_mm_s` default 50, at most 2000. Errors: `validation_failed` (out of reach, joint limits, singularity), `collision`, `not_homed` |
 | `HomeAll` | – | `CommandResponse` | Since 0.1.4. Homes every homeable axis following `RobotConfig.home_all`; the robot must be ready |
 | `Stop` | – | `CommandResponse` | Controlled stop |
 | `EmergencyStop` | – | `CommandResponse` | Latches `emergency_stopped` |
@@ -79,7 +81,7 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 
 | Field | Type | Meaning |
 |---|---|---|
-| `api_version` | string | Semantic version of this contract, e.g. `0.2.0` |
+| `api_version` | string | Semantic version of this contract, e.g. `0.3.0` |
 | `engine_version` | string | |
 | `mcu_protocol_version` | uint32 | MCU wire protocol version |
 | `plugin_api_version` | string | Host plugin API version |
@@ -95,6 +97,7 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 | `fault` | optional `Fault` | Unset when no fault is latched |
 | `mcu` | `McuTelemetry` | |
 | `axes` | repeated `AxisTelemetry` | |
+| `tool` | optional `ToolPose` | Tool pose from the measured joint positions: `position_mm` (`Vec3`, base frame) and `rotation_deg` (`Vec3`, roll/pitch/yaw). Unset when the geometry is not a single serial chain (then `MoveL` is unavailable). Since 0.3.0 |
 
 `Fault`: `code` (`FaultCode`), `message`, `axis` (empty when not axis-specific).
 
@@ -184,9 +187,10 @@ Each value is prefixed with the enum name in the proto, e.g. `ROBOT_STATE_READY`
 | 0.1.3 | `AxisConfig.geometry` (`AxisGeometry`, `Vec3`) |
 | 0.1.4 | `HomeAll` RPC, `RobotConfig.home_all` (`HomeAllPlan`, `HomeAllGroup`), `RobotConfig.collision_checking`, `AxisGeometry.radius_mm`, `AxisTelemetry.homing`, error code `collision` |
 | 0.2.0 | `MoveJ` RPC (`MoveJRequest`, `JointTarget`): coordinated joint moves. New minor: clients accept `0.2.x` engines only |
+| 0.3.0 | `MoveL` (`MoveLRequest`), `MoveJPath` (`MoveJPathRequest`, `JointWaypoint`), `Telemetry.tool` (`ToolPose`). New minor: clients accept `0.3.x` engines only |
 
 - **PATCH:** additive changes only (new fields, messages, RPCs and enum values).
-- **MINOR:** breaking changes and major features; coordinated MoveJ will be `0.2.0`.
+- **MINOR:** breaking changes and major features (MoveJ was `0.2.0`; MoveL and blended paths `0.3.0`).
 - Field numbers are never reused; removed fields are `reserved`.
 
 Versions 0.1.0–0.1.4 were first published as 1.0.0–1.2.0. See [Contracts & versioning](/internals/versioning#engine-api).

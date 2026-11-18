@@ -37,7 +37,8 @@ The rule that holds everything together: **the engine is the only owner of robot
 | ratavyr gateway (REST, WebSocket, roles, audit) | Implemented |
 | sindrava UI | Implemented; Robot Composer is read-only |
 | Coordinated joint moves (MoveJ) | Implemented: listed joints start and finish together; shown on a simulated six-axis arm |
-| Cartesian (straight-line tool) moves | **Not yet** |
+| Blended joint paths (MoveJPath) | Implemented: through waypoints without stopping |
+| Cartesian straight-line moves (MoveL) | Implemented for serial-chain geometry; numeric inverse kinematics |
 | Multiple MCUs per robot | **Not yet** — one MCU per robot |
 
 See [Roadmap & status](/internals/roadmap) for the full list.

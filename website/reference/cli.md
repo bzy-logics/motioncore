@@ -62,6 +62,8 @@ With `--config`, the simulator takes the axis geometry (endstop positions, etc.)
 | `motioncore estop` | Software emergency stop: drives disabled immediately, latched. Complements, never replaces, a hardware E-stop |
 | `motioncore reset-fault` | Clear a latched fault. Never resumes motion; axes must be re-homed |
 | `motioncore home AXIS` | Run the axis's homing procedure |
+| `motioncore movej-path "AXIS=POS ..." ... [--speed S]` | Blended joint path: one argument per waypoint; through them without stopping at intermediate ones |
+| `motioncore movel X Y Z [--rpy R,P,Y] [--speed MM_S] [--speed-scale S]` | Cartesian straight line of the tool point to X Y Z (mm); orientation held unless `--rpy` is given |
 | `motioncore movej AXIS=POS... [--speed S]` | Coordinated joint move: listed axes start and finish together; all must be homed. `S` scales every axis' velocity limit, 0 < S ≤ 1 |
 | `motioncore home-all` | Home every axis, following the profile's `[home_all]` plan (one at a time without one) |
 | `motioncore jog AXIS DELTA [--velocity V]` | Relative move in axis units. Negative values allowed: `jog j1 -5` |
