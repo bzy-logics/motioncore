@@ -127,13 +127,13 @@ tip = [200.0, 0.0, 0.0]       # optional: end of this joint's link (e.g. tool fl
 radius = 20.0                 # optional: link thickness, mm; enables collision checking
 ```
 
-Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Motion is still commanded one axis at a time. Requires engine API 0.1.3 (`radius`: 0.1.4).
+Links are drawn from each joint to the joints mounted on it; `tip` gives the last joint of a chain its length. If one axis has geometry, every axis needs it. Geometry is not needed to move joints together ([MoveJ](/guide/motion#coordinated-joint-moves-movej) plans in joint space); it is used for display and collision checking. Requires engine API 0.1.3 (`radius`: 0.1.4).
 
 ![A two-link arm on a linear rail, drawn from its geometry in sindrava](/screenshots/rail-arm-viewer.png)
 
 #### Collision checking
 
-Give every axis a `radius` and the engine models each link as a capsule of that thickness. Once **every** axis is homed, each `move_to` and `jog` is checked before it starts: the moving joint is swept to its target with the others held still, and the move is refused (error `collision`) if two links would come closer than 2 mm or a link would reach the floor. A move that only increases the clearance is always allowed, so a robot that is already too close can back out. Sindrava's 3D viewer runs the same check on its preview and turns it red.
+Give every axis a `radius` and the engine models each link as a capsule of that thickness. Once **every** axis is homed, each `move_to`, `jog` and `move_j` is checked before it starts: the moving joints are swept to their targets along the move's straight joint-space path with the others held still, and the move is refused (error `collision`) if two links would come closer than 2 mm or a link would reach the floor. A move that only increases the clearance is always allowed, so a robot that is already too close can back out. Sindrava's 3D viewer runs the same check on its preview and turns it red.
 
 Links that touch by construction (a joint and the one mounted on it, or the joints of a spherical wrist) are not compared. The model is only as good as the radii: choose them to enclose the real links, motors and cables. Before homing, positions are unknown and nothing is checked.
 
