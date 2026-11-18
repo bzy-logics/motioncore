@@ -14,6 +14,26 @@ MotionCore is **not a certified safety system**. It is designed to be safety-con
 4. **Plugins propose, the core decides.** Anything motion-related from a plugin passes the planner's validation and the MCU's own checks before a single step is emitted.
 5. **Hardware safety is independent.** The hardware E-stop must work with Linux, the engine, the gateway and every plugin dead.
 
+## Stop, pause and emergency stop
+
+Stop, Pause, Resume and Emergency Stop are different functions and are never substituted for one another:
+
+- **Stop:** controlled termination of motion.
+- **Pause:** temporary feed hold with a recoverable execution state.
+- **Resume:** validated continuation of the remaining trajectory.
+- **Emergency Stop:** independent safety action that takes precedence over every software motion command.
+
+| Function | Drives | Path | Positions afterwards |
+|---|---|---|---|
+| **Hardware E-stop** | Power removed by the safety circuit | Not controlled | Lost: re-home |
+| **Software E-stop** (`estop`) | ENABLE released at once, step output halted; latches | Not controlled | Lost: re-home |
+| **Stop** (`stop`) | Stay enabled | Specified: coordinated stop along the planned path, with a reported fallback. **Today every Stop uses the fallback**: each axis brakes on its own, so a coordinated or Cartesian move may leave its path | Kept |
+| **Pause / Resume** | Stay enabled | Feed hold along the path; Resume only after position, drive, interlock and trajectory checks. *Not implemented yet* | Kept |
+| **Disable** | Controlled stop, then released | As Stop | Kept, but no holding torque |
+| **Fault** | Released at once by the MCU; latches | Not controlled | Lost: re-home |
+
+A Stop or E-stop that arrives while a move is still being planned cancels it: nothing is sent. Software permissions never affect the hardware E-stop, and stopping times measured in software are not safety-rated. The full specification is the authoritative contract for every component: [`docs/stop-behaviour.md`](https://github.com/bzy-logics/motioncore/blob/main/docs/stop-behaviour.md). It covers the state × action table, position confidence, Resume checks, roles, latency metrics and validation status.
+
 ## What each layer enforces
 
 ### MCU firmware
