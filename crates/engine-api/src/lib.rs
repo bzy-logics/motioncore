@@ -10,9 +10,25 @@ pub mod v1 {
     tonic::include_proto!("motioncore.engine.v1");
 }
 
-/// Semantic version of the contract in this crate. Bump on every change:
-/// minor for additive changes, major (with a new proto package) for breaking ones.
-pub const API_VERSION: &str = "1.2.0";
+/// Version of the contract in this crate (`0.MINOR.PATCH` while MotionCore
+/// is pre-1.0). Bump on every change: PATCH for additive, compatible changes;
+/// MINOR for breaking changes and major features. Clients accept an engine
+/// with the same `0.MINOR` (see [`is_compatible`]).
+pub const API_VERSION: &str = "0.1.4";
+
+/// Whether an engine reporting `api_version` speaks a contract compatible
+/// with this crate's: same major and, while the major is 0, same minor.
+pub fn is_compatible(api_version: &str) -> bool {
+    fn major_minor(v: &str) -> Option<(u64, u64)> {
+        let mut it = v.split('.');
+        Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+    }
+    match (major_minor(API_VERSION), major_minor(api_version)) {
+        (Some((0, a)), Some((0, b))) => a == b,
+        (Some((a, _)), Some((b, _))) => a == b,
+        _ => false,
+    }
+}
 
 /// Trailing-metadata key carrying the precise MotionCore error code.
 pub const ERROR_CODE_METADATA: &str = "motioncore-error-code";
@@ -25,6 +41,18 @@ mod tests {
     #[test]
     fn contract_version_matches_package() {
         assert!(super::PROTO_V1.contains("package motioncore.engine.v1;"));
-        assert!(super::API_VERSION.starts_with("1."));
+        assert!(super::API_VERSION.starts_with("0."));
+    }
+
+    #[test]
+    fn compatibility_is_same_zero_minor() {
+        use super::is_compatible;
+        assert!(is_compatible(super::API_VERSION));
+        assert!(is_compatible("0.1.0"));
+        assert!(is_compatible("0.1.99"));
+        assert!(!is_compatible("0.2.0"));
+        assert!(!is_compatible("1.2.0"));
+        assert!(!is_compatible("garbage"));
+        assert!(!is_compatible(""));
     }
 }

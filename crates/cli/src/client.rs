@@ -24,8 +24,12 @@ pub async fn connect(addr: &str) -> Result<Client> {
     };
     let mut engine = EngineServiceClient::new(channel);
     let info = engine.get_info(pb::GetInfoRequest {}).await?.into_inner();
-    if !info.api_version.starts_with("1.") {
-        anyhow::bail!("engine speaks API {}, this CLI needs 1.x", info.api_version);
+    if !motioncore_engine_api::is_compatible(&info.api_version) {
+        anyhow::bail!(
+            "engine speaks API {}, this CLI needs {} (same 0.MINOR)",
+            info.api_version,
+            motioncore_engine_api::API_VERSION
+        );
     }
     Ok(Client { engine })
 }

@@ -339,10 +339,10 @@ async fn firmware_service_is_restricted() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn geometry_is_served_and_api_version_is_1_2() {
+async fn geometry_is_served_and_api_version_is_current() {
     let mut c = start_with("rail-arm-virtual.toml", false).await;
     let info = c.engine.get_info(pb::GetInfoRequest {}).await.unwrap().into_inner();
-    assert_eq!(info.api_version, "1.2.0");
+    assert_eq!(info.api_version, motioncore_engine_api::API_VERSION);
     let cfg = c.engine.get_robot_config(pb::GetRobotConfigRequest {}).await.unwrap().into_inner();
     let g = |id: &str| cfg.axes.iter().find(|a| a.id == id).unwrap().geometry.clone().unwrap();
     let rail = g("x");

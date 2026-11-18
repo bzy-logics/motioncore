@@ -5,30 +5,44 @@ The three repositories are released independently. Each boundary between them ha
 | Boundary | Contract | Owner | Versioning |
 |---|---|---|---|
 | web ↔ server | REST + WebSocket (`ratavyr/docs/rest-api.md`) | ratavyr | v1 |
-| server/CLI ↔ engine | gRPC `motioncore.engine.v1` (`crates/engine-api`) | motioncore | Tag `engine-api/vX.Y.Z`; additive within v1 |
+| server/CLI ↔ engine | gRPC `motioncore.engine.v1` (`crates/engine-api`) | motioncore | Tag `engine-api/v0.MINOR.PATCH`; additive within a `0.MINOR` |
 | engine ↔ MCU | Binary protocol (`crates/protocol`) | motioncore | `PROTOCOL_VERSION`, checked at handshake |
 | engine ↔ plugins | `crates/plugin-sdk` | motioncore | `API_VERSION`, checked per manifest |
 
-**Incompatible peers fail safely.** The engine refuses an MCU with another protocol version or missing capabilities; ratavyr and the CLI refuse an engine whose `api_version` is not `1.x`; the plugin runtime refuses manifests with another API version.
+**Incompatible peers fail safely.** The engine refuses an MCU with another protocol version or missing capabilities; ratavyr and the CLI refuse an engine whose `api_version` has a different `0.MINOR`; the plugin runtime refuses manifests with another API version.
 
 ## Engine API
 
 The `.proto` in `crates/engine-api` is the single source of truth. There are no independently edited copies.
 
-Rules for v1:
+MotionCore is pre-1.0, and so is its engine API: `API_VERSION` is `0.MINOR.PATCH`.
 
-- Only additive changes: new fields, messages, RPCs, enum values.
+- **PATCH** for additive, compatible changes: new fields, messages, RPCs, enum values. Older clients keep working; new features are detected by the presence of fields, not by comparing versions.
+- **MINOR** for breaking changes and major features (coordinated MoveJ will be `0.2.0`). Clients accept an engine with the same `0.MINOR` only, so ratavyr is re-released with each minor.
 - Field numbers are never reused; removed fields are `reserved`.
-- Breaking changes go in a new package, `motioncore.engine.v2`.
-- Releases are git tags `engine-api/vX.Y.Z`.
+- The proto package stays `motioncore.engine.v1`: the `v1` is the package generation, not the version.
+- Releases are git tags `engine-api/v0.MINOR.PATCH`.
+- From 1.0 on, the usual semver rule applies: the major version marks breaking changes.
+
+The engine-api version is independent of MotionCore's milestones: engine-api `0.2.0` ships in MotionCore v0.3.
+
+| engine-api | Change | Earlier number |
+|---|---|---|
+| 0.1.0 | Initial contract | 1.0.0 |
+| 0.1.1 | `go_package` set | 1.0.1 |
+| 0.1.2 | Moved to bzy-logics | 1.0.2 |
+| 0.1.3 | `AxisConfig.geometry` | 1.1.0 |
+| 0.1.4 | `HomeAll`, collision checking, axis `homing` | 1.2.0 |
+
+The API was first numbered `1.x`; it was renumbered to `0.x` because the project is pre-1.0. The old `engine-api/v1.*` tags were removed, and earlier commits still report the old numbers.
 
 ### Releasing a contract version
 
-1. Change `engine.proto` following the rules above, and bump `API_VERSION` in `crates/engine-api/src/lib.rs` when the API itself changes.
+1. Change `engine.proto` following the rules above, and bump `API_VERSION` in `crates/engine-api/src/lib.rs` (PATCH or MINOR, as above).
 2. Commit, then tag the commit and push the tag:
    ```bash
-   git tag engine-api/v1.1.0
-   git push origin main refs/tags/engine-api/v1.1.0
+   git tag engine-api/v0.1.5
+   git push origin main refs/tags/engine-api/v0.1.5
    ```
 3. Consumers pin the tag. ratavyr records tag, commit and the file's SHA-256 in `contract.lock` and regenerates its Go bindings; see [ratavyr: engine contract](https://ratavyr.bzy-logics.com/development/engine-contract).
 

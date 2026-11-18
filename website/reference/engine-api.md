@@ -29,7 +29,7 @@ Errors are gRPC status codes. The precise MotionCore code is in the trailing met
 | `not_found` | `NOT_FOUND` |
 | `not_homed` | `FAILED_PRECONDITION` |
 | `invalid_state` | `FAILED_PRECONDITION` |
-| `collision` | `FAILED_PRECONDITION` (since 1.2.0) |
+| `collision` | `FAILED_PRECONDITION` (since 0.1.4) |
 | `mcu_error` | `UNAVAILABLE` |
 | `internal` | `INTERNAL` |
 
@@ -49,7 +49,7 @@ Positions, deltas and velocities are in the axis display unit (`deg` or `mm`).
 | `Jog` | `axis`, `delta`, optional `velocity` | `CommandResponse` | Default velocity: axis maximum (25 % when unhomed) |
 | `MoveTo` | `axis`, `position`, optional `velocity` | `CommandResponse` | Axis must be homed |
 | `Home` | `axis` | `CommandResponse` | |
-| `HomeAll` | – | `CommandResponse` | Since 1.2.0. Homes every homeable axis following `RobotConfig.home_all`; the robot must be ready |
+| `HomeAll` | – | `CommandResponse` | Since 0.1.4. Homes every homeable axis following `RobotConfig.home_all`; the robot must be ready |
 | `Stop` | – | `CommandResponse` | Controlled stop |
 | `EmergencyStop` | – | `CommandResponse` | Latches `emergency_stopped` |
 | `ResetFault` | – | `CommandResponse` | Never resumes motion; drives stay disabled; re-home required |
@@ -78,7 +78,7 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 
 | Field | Type | Meaning |
 |---|---|---|
-| `api_version` | string | Semantic version of this contract, e.g. `1.2.0` |
+| `api_version` | string | Semantic version of this contract, e.g. `0.1.4` |
 | `engine_version` | string | |
 | `mcu_protocol_version` | uint32 | MCU wire protocol version |
 | `plugin_api_version` | string | Host plugin API version |
@@ -114,15 +114,15 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 
 ### `AxisTelemetry`
 
-`id`, `homed`, `enabled`, `commanded_position`, `measured_position` (from the MCU step counter; no encoder feedback in v1.0), `velocity`, `endstop`, `homing` (true while this axis searches for its switch; since 1.2.0).
+`id`, `homed`, `enabled`, `commanded_position`, `measured_position` (from the MCU step counter; no encoder feedback yet), `velocity`, `endstop`, `homing` (true while this axis searches for its switch; since 0.1.4).
 
 ### `RobotConfig`, `McuConfig`, `AxisConfig`
 
-`RobotConfig`: `name`, `profile`, `axes`, `mcus`, `home_all` (`HomeAllPlan`; since 1.2.0), `collision_checking` (bool: moves are checked against the link model once all axes are homed; since 1.2.0).
+`RobotConfig`: `name`, `profile`, `axes`, `mcus`, `home_all` (`HomeAllPlan`; since 0.1.4), `collision_checking` (bool: moves are checked against the link model once all axes are homed; since 0.1.4).
 `McuConfig`: `name`, `board`, `transport`, `watchdog_ms`.
-`AxisConfig`: `id`, `name`, `kind` (`JointKind`), `unit`, `min`, `max`, `max_velocity`, `max_acceleration`, optional `home_position`, `steps_per_unit`, `mcu`, `mcu_channel`, `actuator`, `step_pin`, `dir_pin`, `enable_pin`, `endstop_pin` (empty when there is no endstop), `geometry` (`AxisGeometry`, unset when the profile defines none; since 1.1.0).
+`AxisConfig`: `id`, `name`, `kind` (`JointKind`), `unit`, `min`, `max`, `max_velocity`, `max_acceleration`, optional `home_position`, `steps_per_unit`, `mcu`, `mcu_channel`, `actuator`, `step_pin`, `dir_pin`, `enable_pin`, `endstop_pin` (empty when there is no endstop), `geometry` (`AxisGeometry`, unset when the profile defines none; since 0.1.3).
 
-### `AxisGeometry` (since 1.1.0)
+### `AxisGeometry` (since 0.1.3)
 
 URDF-style joint placement: `frame(child) = frame(parent) · Translate(origin_mm) · RPY(rotation_deg) · Joint(q about axis)`, where `frame(parent)` includes the parent's joint motion.
 
@@ -133,11 +133,11 @@ URDF-style joint placement: `frame(child) = frame(parent) · Translate(origin_mm
 | `rotation_deg` | `Vec3` | Fixed roll, pitch, yaw in degrees (about X, Y, Z, in that order) |
 | `axis` | `Vec3` | Unit rotation axis (revolute) or slide direction (prismatic) |
 | `tip_mm` | `Vec3` | End of this joint's link (e.g. tool flange), joint frame; unset if not configured |
-| `radius_mm` | optional double | Link thickness for collision checking; unset if not configured (since 1.2.0) |
+| `radius_mm` | optional double | Link thickness for collision checking; unset if not configured (since 0.1.4) |
 
 `Vec3` is `x`, `y`, `z` (double). Either every axis has geometry or none does.
 
-### `HomeAllPlan` (since 1.2.0)
+### `HomeAllPlan` (since 0.1.4)
 
 What `HomeAll` does: `groups` (repeated `HomeAllGroup`, each a list of `axes`) home in order; the axes of one group home at the same time. `start_pose` describes the pose the plan was designed for (empty when not configured); show it before homing. `from_profile` is false when the profile has no `[home_all]` and the plan is the default of one axis per group in profile order.
 
@@ -171,18 +171,22 @@ A `oneof`: `telemetry` (`Telemetry`) or `log` (`LogEntry`: `time_ms`, `level`, `
 | `JobKind` | `BUILD`, `FLASH` |
 | `JobState` | `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED` |
 
-Each value is prefixed with the enum name in the proto, e.g. `ROBOT_STATE_READY`. A newer 1.x engine may add values; clients must handle unknown ones.
+Each value is prefixed with the enum name in the proto, e.g. `ROBOT_STATE_READY`. A newer engine with the same `0.MINOR` may add values; clients must handle unknown ones.
 
-## Compatibility rules for v1
+## Versions
+
+`api_version` is `0.MINOR.PATCH` while MotionCore is pre-1.0. Clients accept an engine with the same `0.MINOR`.
 
 | Version | Change |
 |---|---|
-| 1.0.x | Initial contract |
-| 1.1.0 | `AxisConfig.geometry` (`AxisGeometry`, `Vec3`) |
-| 1.2.0 | `HomeAll` RPC, `RobotConfig.home_all` (`HomeAllPlan`, `HomeAllGroup`), `RobotConfig.collision_checking`, `AxisGeometry.radius_mm`, `AxisTelemetry.homing`, error code `collision` |
+| 0.1.0 – 0.1.2 | Initial contract (`go_package`, organisation move) |
+| 0.1.3 | `AxisConfig.geometry` (`AxisGeometry`, `Vec3`) |
+| 0.1.4 | `HomeAll` RPC, `RobotConfig.home_all` (`HomeAllPlan`, `HomeAllGroup`), `RobotConfig.collision_checking`, `AxisGeometry.radius_mm`, `AxisTelemetry.homing`, error code `collision` |
 
-- Only additive changes: new fields, messages, RPCs and enum values.
+- **PATCH:** additive changes only (new fields, messages, RPCs and enum values).
+- **MINOR:** breaking changes and major features; coordinated MoveJ will be `0.2.0`.
 - Field numbers are never reused; removed fields are `reserved`.
-- Breaking changes require a new package, `motioncore.engine.v2`.
+
+Versions 0.1.0–0.1.4 were first published as 1.0.0–1.2.0. See [Contracts & versioning](/internals/versioning#engine-api).
 
 See [Contracts & versioning](/internals/versioning).
