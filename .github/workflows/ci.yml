@@ -64,6 +64,8 @@ jobs:
           key: ${{ matrix.target }}
       - name: clippy
         run: cargo clippy -p ${{ matrix.crate }} --target ${{ matrix.target }} -- -D warnings
+      - name: clippy (bench-panic test build)
+        run: cargo clippy -p ${{ matrix.crate }} --target ${{ matrix.target }} --features bench-panic -- -D warnings
       - name: build
         run: cargo build -p ${{ matrix.crate }} --profile firmware --target ${{ matrix.target }}
 

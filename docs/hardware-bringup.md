@@ -30,7 +30,9 @@ order; do not skip the no-load steps.
    during flashing; EN low only after `enable`.
 3. Unplug USB while enabled → EN must go high within the watchdog timeout (500 ms).
 4. Stall the firmware (debugger halt) → IWDG reset within ~100 ms → EN high.
-5. Step timing (logic analyser on STEP, DIR and a spare GPIO toggled in the
+5. Panic safe state: build with `--features bench-panic` (test builds only); during a move tie PB1 to GND →
+   EN high and STEP stopped within 50 µs, then IWDG reset after ~100 ms.
+6. Step timing (logic analyser on STEP, DIR and a spare GPIO toggled in the
    `TIM3` interrupt):
    - STEP high **and** low time ≥ 2 µs at 1, 5, 10 and 20 kHz, including the
      back-to-back steps of a tick that emits more than one step. Compare with
@@ -44,7 +46,7 @@ order; do not skip the no-load steps.
      `SegmentLate` (drives disabled), not emit a burst of steps.
    If any limit fails, lower `max_velocity` in the profile; higher rates need
    timer-compare pulse generation instead of tick-based steps.
-6. Motor connected, **no load**, current limit low: jog ±1°, home, stop mid-move, E-stop.
-7. Record measured limits in `robot-profiles/single-axis-stm32f411.toml`.
+7. Motor connected, **no load**, current limit low: jog ±1°, home, stop mid-move, E-stop.
+8. Record measured limits in `robot-profiles/single-axis-stm32f411.toml`.
 
 Performance limits must be measured, not assumed (spec §12).
