@@ -343,8 +343,14 @@ pub fn load_artifact(dir: &Path) -> Result<Manifest> {
     }
     let board = board(&m.board)?;
     if m.firmware_target != board.firmware_target.unwrap_or_default() || m.rust_target != board.rust_target.unwrap_or_default() {
-        bail!("artifact targets {} / {}, but board '{}' needs {} / {}", m.firmware_target, m.rust_target, board.id,
-            board.firmware_target.unwrap_or("-"), board.rust_target.unwrap_or("-"));
+        bail!(
+            "artifact targets {} / {}, but board '{}' needs {} / {}",
+            m.firmware_target,
+            m.rust_target,
+            board.id,
+            board.firmware_target.unwrap_or("-"),
+            board.rust_target.unwrap_or("-")
+        );
     }
     if let FlashMethod::Uf2 { family_id, .. } = board.flash {
         let (Some(name), Some(sum)) = (&m.uf2, &m.uf2_sha256) else { bail!("artifact has no UF2 image (rebuild)") };
@@ -522,13 +528,9 @@ pub fn list_ports() -> Result<Vec<PortInfo>> {
         .map(|p| PortInfo {
             name: p.port_name,
             description: match p.port_type {
-                tokio_serial::SerialPortType::UsbPort(u) => format!(
-                    "usb {:04x}:{:04x} {} {}",
-                    u.vid,
-                    u.pid,
-                    u.manufacturer.unwrap_or_default(),
-                    u.product.unwrap_or_default()
-                ),
+                tokio_serial::SerialPortType::UsbPort(u) => {
+                    format!("usb {:04x}:{:04x} {} {}", u.vid, u.pid, u.manufacturer.unwrap_or_default(), u.product.unwrap_or_default())
+                }
                 other => format!("{other:?}"),
             },
         })

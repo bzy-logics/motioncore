@@ -23,9 +23,7 @@ use embedded_hal::digital::{InputPin, OutputPin};
 use motioncore_firmware_core::Hal;
 use motioncore_firmware_pio_step::{program, sm_for_axis, StepRuns, Timing};
 use motioncore_protocol::caps;
-use rp2040_hal::gpio::{
-    DynPinId, FunctionPio0, FunctionPio1, FunctionSioInput, FunctionSioOutput, Pin, PinState, Pins, PullDown, PullUp,
-};
+use rp2040_hal::gpio::{DynPinId, FunctionPio0, FunctionPio1, FunctionSioInput, FunctionSioOutput, Pin, PinState, Pins, PullDown, PullUp};
 
 use crate::pio::{load_program, StepSm};
 
@@ -41,13 +39,7 @@ pub const SYS_CLOCK_HZ: u32 = 125_000_000;
 /// PIO pulse timing: 5 MHz state-machine clock (200 ns per cycle), 2 µs
 /// STEP high, ≥ 2 µs STEP low, 2 µs DIR setup, pulses within 90 % of each
 /// window. Check against the driver datasheet before changing.
-pub const TIMING: Timing = Timing {
-    sm_clock_hz: 5_000_000,
-    high_cycles: 10,
-    min_low_cycles: 10,
-    dir_setup_cycles: 10,
-    window_budget_pct: 90,
-};
+pub const TIMING: Timing = Timing { sm_clock_hz: 5_000_000, high_cycles: 10, min_low_cycles: 10, dir_setup_cycles: 10, window_budget_pct: 90 };
 
 pub const PIO_CLKDIV: u16 = (SYS_CLOCK_HZ / TIMING.sm_clock_hz) as u16;
 // `is_multiple_of` needs Rust 1.87; the workspace MSRV is 1.85.

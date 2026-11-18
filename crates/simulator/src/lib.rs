@@ -49,10 +49,8 @@ impl VirtualOptions {
         for a in robot.file.axes.iter().filter(|a| a.mcu == mcu) {
             if let (Some(h), Some(_)) = (&a.homing, &a.endstop) {
                 if let Some(slot) = axes.get_mut(a.channel as usize) {
-                    slot.endstop = Some(SimEndstop {
-                        at_steps: (h.position * a.steps_per_unit).round() as i64,
-                        positive_side: h.direction == Direction::Positive,
-                    });
+                    slot.endstop =
+                        Some(SimEndstop { at_steps: (h.position * a.steps_per_unit).round() as i64, positive_side: h.direction == Direction::Positive });
                 }
             }
         }
@@ -111,11 +109,7 @@ pub fn board_info() -> BoardInfo {
     BoardInfo {
         target: "virtual",
         board: "virtual",
-        firmware_version: (
-            parse_u8(env!("CARGO_PKG_VERSION_MAJOR")),
-            parse_u8(env!("CARGO_PKG_VERSION_MINOR")),
-            parse_u8(env!("CARGO_PKG_VERSION_PATCH")),
-        ),
+        firmware_version: (parse_u8(env!("CARGO_PKG_VERSION_MAJOR")), parse_u8(env!("CARGO_PKG_VERSION_MINOR")), parse_u8(env!("CARGO_PKG_VERSION_PATCH"))),
         build_hash: 0x5157_0001,
         capabilities: caps::STEPPER_STEP_DIR | caps::ENDSTOP | caps::WATCHDOG,
         // Host OS timers are coarse (≈15 ms on Windows), unlike a hardware tick.

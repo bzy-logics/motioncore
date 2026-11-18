@@ -3,11 +3,23 @@
 ## motioncore
 
 ```bash
-cargo test                    # all host crates: protocol, firmware runtime, planner, graph, plugins, link, gRPC end-to-end
-cargo clippy --all-targets
+cargo fmt --all -- --check    # formatting (rustfmt.toml: max_width 160)
+cargo test --workspace        # all host crates: protocol, firmware runtime, planner, graph, plugins, link, gRPC end-to-end
+cargo clippy --workspace --all-targets --exclude motioncore-board-stm32f4 --exclude motioncore-board-rp2040 -- -D warnings
+cargo clippy -p motioncore-board-rp2040 --target thumbv6m-none-eabi -- -D warnings
 cargo build -p motioncore-board-stm32f4 --profile firmware --target thumbv7em-none-eabihf
 cargo build -p motioncore-board-rp2040  --profile firmware --target thumbv6m-none-eabi
+python tools/step-skew/step_skew.py --self-test
+(cd examples/sim-vision-pick && python -m unittest)
 ```
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs all of the above on every pull request and every push to `main`: rustfmt, clippy and the test suite on the host; clippy and a `firmware`-profile build for each board; the Python tools and example. A pull request merges only with a green CI run.
+
+CI runs on Linux. Some code (the engine's Unix-socket listener, the CLI's Unix-socket client) only compiles there; on Windows or macOS, check it with `cargo clippy --workspace --all-targets --exclude motioncore-board-stm32f4 --exclude motioncore-board-rp2040 --target x86_64-unknown-linux-gnu -- -D warnings` (after `rustup target add x86_64-unknown-linux-gnu`; type-checking needs no Linux linker).
+
+**Formatting** is enforced with rustfmt using the repository's `rustfmt.toml` (`max_width = 160`, `use_small_heuristics = "Max"`, matching the existing wide-line style). Run `cargo fmt --all` before committing.
 
 Because the firmware runtime (`firmware-core`, `firmware-stepper`, `firmware-pio-step`) is `no_std` and hardware-independent, it is tested on the host. `firmware-pio-step` includes an emulator for its PIO program, so pulse encoding and windowing are tested without a Pico. `crates/core/tests/e2e.rs` exercises the gRPC API end to end against the virtual MCU.
 

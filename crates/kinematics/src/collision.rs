@@ -49,17 +49,9 @@ pub struct Collision {
 impl fmt::Display for Collision {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.b == "floor" {
-            write!(
-                f,
-                "the link of {} would reach the floor ({:.1} mm)",
-                self.a, self.gap
-            )
+            write!(f, "the link of {} would reach the floor ({:.1} mm)", self.a, self.gap)
         } else {
-            write!(
-                f,
-                "the links of {} and {} would collide (gap {:.1} mm)",
-                self.a, self.b, self.gap
-            )
+            write!(f, "the links of {} and {} would collide (gap {:.1} mm)", self.a, self.b, self.gap)
         }
     }
 }
@@ -90,11 +82,7 @@ pub fn segment_distance(p1: V3, q1: V3, p2: V3, q2: V3) -> f64 {
         } else {
             let b = dot(d1, d2);
             let denom = a * e - b * b;
-            let mut s0 = if denom > EPS {
-                ((b * f - c * e) / denom).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+            let mut s0 = if denom > EPS { ((b * f - c * e) / denom).clamp(0.0, 1.0) } else { 0.0 };
             let mut t0 = (b * s0 + f) / e;
             if t0 < 0.0 {
                 t0 = 0.0;
@@ -166,12 +154,7 @@ impl CollisionModel {
                 }
             }
         }
-        Self {
-            joints,
-            ends,
-            pairs,
-            margin,
-        }
+        Self { joints, ends, pairs, margin }
     }
 
     pub fn joints(&self) -> &[JointSpec] {
@@ -184,15 +167,8 @@ impl CollisionModel {
         for (i, j) in self.joints.iter().enumerate() {
             let base = j.parent.map(|p| out[p]).unwrap_or(translate([0.0; 3]));
             let v = q.get(i).copied().unwrap_or(0.0);
-            let motion = if j.prismatic {
-                translate([j.axis[0] * v, j.axis[1] * v, j.axis[2] * v])
-            } else {
-                rotate(j.axis, v.to_radians())
-            };
-            out.push(mul(
-                &base,
-                &mul(&mul(&translate(j.origin), &rpy(j.rotation_deg)), &motion),
-            ));
+            let motion = if j.prismatic { translate([j.axis[0] * v, j.axis[1] * v, j.axis[2] * v]) } else { rotate(j.axis, v.to_radians()) };
+            out.push(mul(&base, &mul(&mul(&translate(j.origin), &rpy(j.rotation_deg)), &motion)));
         }
         out
     }
@@ -204,10 +180,7 @@ impl CollisionModel {
             .enumerate()
             .map(|(i, ends)| {
                 let o = apply(&f[i], [0.0; 3]);
-                ends.iter()
-                    .filter(|e| norm(**e) > ZERO_LEN)
-                    .map(|e| (o, apply(&f[i], *e)))
-                    .collect()
+                ends.iter().filter(|e| norm(**e) > ZERO_LEN).map(|e| (o, apply(&f[i], *e))).collect()
             })
             .collect()
     }
@@ -215,25 +188,13 @@ impl CollisionModel {
     /// Smallest surface gap at `q`, and which bodies it is between.
     pub fn clearance(&self, q: &[f64]) -> Collision {
         let segs = self.segments(q);
-        let mut worst = Collision {
-            a: String::new(),
-            b: String::new(),
-            gap: f64::INFINITY,
-            at: q.to_vec(),
-        };
+        let mut worst = Collision { a: String::new(), b: String::new(), gap: f64::INFINITY, at: q.to_vec() };
         for &(a, b) in &self.pairs {
             for &(p1, q1) in &segs[a] {
                 for &(p2, q2) in &segs[b] {
-                    let gap = segment_distance(p1, q1, p2, q2)
-                        - self.joints[a].radius
-                        - self.joints[b].radius;
+                    let gap = segment_distance(p1, q1, p2, q2) - self.joints[a].radius - self.joints[b].radius;
                     if gap < worst.gap {
-                        worst = Collision {
-                            a: self.joints[a].id.clone(),
-                            b: self.joints[b].id.clone(),
-                            gap,
-                            at: q.to_vec(),
-                        };
+                        worst = Collision { a: self.joints[a].id.clone(), b: self.joints[b].id.clone(), gap, at: q.to_vec() };
                     }
                 }
             }
@@ -245,12 +206,7 @@ impl CollisionModel {
             for &(p, e) in &segs[i] {
                 let gap = p[2].min(e[2]) - j.radius;
                 if gap < worst.gap {
-                    worst = Collision {
-                        a: j.id.clone(),
-                        b: "floor".into(),
-                        gap,
-                        at: q.to_vec(),
-                    };
+                    worst = Collision { a: j.id.clone(), b: "floor".into(), gap, at: q.to_vec() };
                 }
             }
         }
@@ -301,55 +257,24 @@ pub(crate) mod tests {
 
     /// The six-axis desktop arm of robot-profiles/dummy-arm-virtual.toml.
     pub(crate) fn dummy() -> CollisionModel {
-        let j =
-            |id: &str, parent: Option<usize>, origin: V3, rot: V3, tip: Option<V3>, radius: f64| {
-                JointSpec {
-                    id: id.into(),
-                    parent,
-                    origin,
-                    rotation_deg: rot,
-                    axis: [0.0, 0.0, 1.0],
-                    tip,
-                    radius,
-                    prismatic: false,
-                }
-            };
+        let j = |id: &str, parent: Option<usize>, origin: V3, rot: V3, tip: Option<V3>, radius: f64| JointSpec {
+            id: id.into(),
+            parent,
+            origin,
+            rotation_deg: rot,
+            axis: [0.0, 0.0, 1.0],
+            tip,
+            radius,
+            prismatic: false,
+        };
         CollisionModel::new(
             vec![
                 j("j1", None, [0.0; 3], [0.0; 3], None, 30.0),
-                j(
-                    "j2",
-                    Some(0),
-                    [35.0, 0.0, 109.0],
-                    [0.0, -90.0, -90.0],
-                    None,
-                    22.0,
-                ),
-                j(
-                    "j3",
-                    Some(1),
-                    [146.0, 0.0, 0.0],
-                    [0.0, 0.0, 90.0],
-                    None,
-                    20.0,
-                ),
-                j(
-                    "j4",
-                    Some(2),
-                    [-52.0, -115.0, 0.0],
-                    [90.0, 0.0, 0.0],
-                    None,
-                    18.0,
-                ),
+                j("j2", Some(0), [35.0, 0.0, 109.0], [0.0, -90.0, -90.0], None, 22.0),
+                j("j3", Some(1), [146.0, 0.0, 0.0], [0.0, 0.0, 90.0], None, 20.0),
+                j("j4", Some(2), [-52.0, -115.0, 0.0], [90.0, 0.0, 0.0], None, 18.0),
                 j("j5", Some(3), [0.0; 3], [-90.0, 0.0, 0.0], None, 18.0),
-                j(
-                    "j6",
-                    Some(4),
-                    [0.0; 3],
-                    [90.0, 0.0, 0.0],
-                    Some([0.0, 0.0, 72.0]),
-                    15.0,
-                ),
+                j("j6", Some(4), [0.0; 3], [90.0, 0.0, 0.0], Some([0.0, 0.0, 72.0]), 15.0),
             ],
             2.0,
         )
@@ -357,21 +282,9 @@ pub(crate) mod tests {
 
     #[test]
     fn segment_distance_cases() {
-        assert!(
-            (segment_distance([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]) - 1.0)
-                .abs()
-                < 1e-12
-        );
-        assert!(
-            (segment_distance([0.0; 3], [2.0, 0.0, 0.0], [1.0, -1.0, 1.0], [1.0, 1.0, 1.0]) - 1.0)
-                .abs()
-                < 1e-12
-        );
-        assert!(
-            (segment_distance([0.0; 3], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]) - 2.0)
-                .abs()
-                < 1e-12
-        );
+        assert!((segment_distance([0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]) - 1.0).abs() < 1e-12);
+        assert!((segment_distance([0.0; 3], [2.0, 0.0, 0.0], [1.0, -1.0, 1.0], [1.0, 1.0, 1.0]) - 1.0).abs() < 1e-12);
+        assert!((segment_distance([0.0; 3], [1.0, 0.0, 0.0], [3.0, 0.0, 0.0], [4.0, 0.0, 0.0]) - 2.0).abs() < 1e-12);
         assert!(segment_distance([0.0; 3], [0.0; 3], [0.0; 3], [0.0; 3]) < 1e-12);
     }
 
@@ -380,31 +293,17 @@ pub(crate) mod tests {
         let m = dummy();
         let tip = |q: &[f64]| apply(&m.frames(q)[5], [0.0, 0.0, 72.0]);
         let up = tip(&[0.0; 6]);
-        assert!(
-            (up[0] + 17.0).abs() < 1e-9 && up[1].abs() < 1e-9 && (up[2] - 442.0).abs() < 1e-9,
-            "{up:?}"
-        );
+        assert!((up[0] + 17.0).abs() < 1e-9 && up[1].abs() < 1e-9 && (up[2] - 442.0).abs() < 1e-9, "{up:?}");
         let rest = tip(&[0.0, -73.0, 180.0, 0.0, 0.0, 0.0]);
-        assert!(
-            (rest[0] - 89.41).abs() < 0.01 && (rest[2] - 146.74).abs() < 0.01,
-            "{rest:?}"
-        );
+        assert!((rest[0] - 89.41).abs() < 0.01 && (rest[2] - 146.74).abs() < 0.01, "{rest:?}");
     }
 
     #[test]
     fn spherical_wrist_bodies_are_not_tested_against_each_other() {
         let m = dummy();
-        let ids: Vec<(String, String)> = m
-            .pairs
-            .iter()
-            .map(|&(a, b)| (m.joints[a].id.clone(), m.joints[b].id.clone()))
-            .collect();
+        let ids: Vec<(String, String)> = m.pairs.iter().map(|&(a, b)| (m.joints[a].id.clone(), m.joints[b].id.clone())).collect();
         // j4, j5 have no volume; j3 (forearm) and j6 (flange) touch through them.
-        assert!(
-            !ids.iter()
-                .any(|(a, b)| a == "j4" || a == "j5" || b == "j4" || b == "j5"),
-            "{ids:?}"
-        );
+        assert!(!ids.iter().any(|(a, b)| a == "j4" || a == "j5" || b == "j4" || b == "j5"), "{ids:?}");
         assert!(!ids.contains(&("j3".into(), "j6".into())));
         assert!(ids.contains(&("j2".into(), "j6".into())));
         assert!(ids.contains(&("j1".into(), "j3".into())));
@@ -413,10 +312,7 @@ pub(crate) mod tests {
     #[test]
     fn known_poses() {
         let m = dummy();
-        assert!(
-            m.clearance(&[0.0, 0.0, 90.0, 0.0, 0.0, 0.0]).gap > 50.0,
-            "upright is clear"
-        );
+        assert!(m.clearance(&[0.0, 0.0, 90.0, 0.0, 0.0, 0.0]).gap > 50.0, "upright is clear");
         let rest = m.clearance(&[0.0, -73.0, 180.0, 0.0, 0.0, 0.0]);
         assert!(rest.gap > m.margin, "rest pose is clear: {rest:?}");
         // The pose the old homing plan ended in: wrist folded into the upper arm.
@@ -432,10 +328,7 @@ pub(crate) mod tests {
         let rest = [0.0, -73.0, 180.0, 0.0, 0.0, 0.0];
         let e = m.check_sweep(&rest, 4, 60.0).unwrap_err();
         assert!(e.gap < m.margin && e.b == "j6", "{e:?}");
-        assert!(
-            e.at[4] > 0.0 && e.at[4] < 30.0,
-            "first contact well before 60: {e:?}"
-        );
+        assert!(e.at[4] > 0.0 && e.at[4] < 30.0, "first contact well before 60: {e:?}");
         assert!(e.to_string().contains("would collide"), "{e}");
         // Pitching the other way is clear.
         m.check_sweep(&rest, 4, -60.0).unwrap();
@@ -465,10 +358,7 @@ pub(crate) mod tests {
         let rest = [0.0, -73.0, 180.0, 0.0, 0.0, 0.0];
         let mut to = rest;
         to[4] = 60.0;
-        assert_eq!(
-            m.check_path(&rest, &to).unwrap_err().at,
-            m.check_sweep(&rest, 4, 60.0).unwrap_err().at
-        );
+        assert_eq!(m.check_path(&rest, &to).unwrap_err().at, m.check_sweep(&rest, 4, 60.0).unwrap_err().at);
     }
 
     #[test]

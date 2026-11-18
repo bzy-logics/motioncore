@@ -403,7 +403,8 @@ mod tests {
             lo + (hi - lo) * ((s >> 11) as f64 / (1u64 << 53) as f64)
         };
         for _ in 0..200 {
-            let goal: Vec<f64> = [(-120.0, 120.0), (-40.0, 60.0), (60.0, 150.0), (-120.0, 120.0), (-90.0, 90.0), (-180.0, 180.0)].iter().map(|&(l, h)| rnd(l, h)).collect();
+            let goal: Vec<f64> =
+                [(-120.0, 120.0), (-40.0, 60.0), (60.0, 150.0), (-120.0, 120.0), (-90.0, 90.0), (-180.0, 180.0)].iter().map(|&(l, h)| rnd(l, h)).collect();
             let target = c.forward(&goal);
             // Seed a few degrees away, as when following a path.
             let seed: Vec<f64> = goal.iter().map(|g| g + rnd(-4.0, 4.0)).collect();
