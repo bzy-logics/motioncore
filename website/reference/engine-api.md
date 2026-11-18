@@ -49,6 +49,7 @@ Positions, deltas and velocities are in the axis display unit (`deg` or `mm`).
 | `Jog` | `axis`, `delta`, optional `velocity` | `CommandResponse` | Default velocity: axis maximum (25 % when unhomed) |
 | `MoveTo` | `axis`, `position`, optional `velocity` | `CommandResponse` | Axis must be homed |
 | `Home` | `axis` | `CommandResponse` | |
+| `MoveJ` | `targets` (repeated `JointTarget`: `axis`, `position`), optional `speed_scale` | `CommandResponse` | Since 0.2.0. Listed axes start and finish together on a straight joint-space line; all must be homed; `speed_scale` in (0, 1], default 1. Errors: `bad_request` (no targets, axis twice), `validation_failed`, `not_homed`, `collision` |
 | `HomeAll` | – | `CommandResponse` | Since 0.1.4. Homes every homeable axis following `RobotConfig.home_all`; the robot must be ready |
 | `Stop` | – | `CommandResponse` | Controlled stop |
 | `EmergencyStop` | – | `CommandResponse` | Latches `emergency_stopped` |
@@ -58,7 +59,7 @@ Positions, deltas and velocities are in the axis display unit (`deg` or `mm`).
 
 Command RPCs return when the engine has **accepted** the command. Follow progress through `StreamEvents`.
 
-When `RobotConfig.collision_checking` is true and every axis is homed, `Jog` and `MoveTo` are refused with `collision` if the swept move would bring two links within 2 mm of each other, or a link to the floor; the message names the links and the joint value. See [Collision checking](/guide/configuration#collision-checking).
+When `RobotConfig.collision_checking` is true and every axis is homed, `Jog`, `MoveTo` and `MoveJ` are refused with `collision` if the swept move would bring two links within 2 mm of each other, or a link to the floor; the message names the links and the joint value. See [Collision checking](/guide/configuration#collision-checking).
 
 ## `FirmwareService`
 
@@ -78,7 +79,7 @@ Firmware build and flash, delegated to the restricted Rust builder. Builds alway
 
 | Field | Type | Meaning |
 |---|---|---|
-| `api_version` | string | Semantic version of this contract, e.g. `0.1.4` |
+| `api_version` | string | Semantic version of this contract, e.g. `0.2.0` |
 | `engine_version` | string | |
 | `mcu_protocol_version` | uint32 | MCU wire protocol version |
 | `plugin_api_version` | string | Host plugin API version |
@@ -182,6 +183,7 @@ Each value is prefixed with the enum name in the proto, e.g. `ROBOT_STATE_READY`
 | 0.1.0 – 0.1.2 | Initial contract (`go_package`, organisation move) |
 | 0.1.3 | `AxisConfig.geometry` (`AxisGeometry`, `Vec3`) |
 | 0.1.4 | `HomeAll` RPC, `RobotConfig.home_all` (`HomeAllPlan`, `HomeAllGroup`), `RobotConfig.collision_checking`, `AxisGeometry.radius_mm`, `AxisTelemetry.homing`, error code `collision` |
+| 0.2.0 | `MoveJ` RPC (`MoveJRequest`, `JointTarget`): coordinated joint moves. New minor: clients accept `0.2.x` engines only |
 
 - **PATCH:** additive changes only (new fields, messages, RPCs and enum values).
 - **MINOR:** breaking changes and major features; coordinated MoveJ will be `0.2.0`.

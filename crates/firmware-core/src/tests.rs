@@ -4,11 +4,11 @@ use std::vec::Vec as StdVec;
 
 #[derive(Default)]
 struct SimHal {
-    pos: [i64; 2],
-    enabled: [bool; 2],
+    pos: [i64; 6],
+    enabled: [bool; 6],
     /// Endstop triggers when physical position <= this value.
-    endstop_at: [Option<i64>; 2],
-    steps: [u64; 2],
+    endstop_at: [Option<i64>; 6],
+    steps: [u64; 6],
     /// Simulated external safety interlock (E-stop chain) is open.
     interlock_open: bool,
     /// Number of `flush_pulses` calls.
@@ -423,4 +423,90 @@ fn pulse_hardware_overrun_faults_and_disables() {
     assert_eq!(r.core.fault(), Some(FaultCode::StepRateExceeded));
     assert!(!r.hal.enabled[0]);
     assert!(r.drain().iter().any(|m| matches!(m, McuMsg::Fault { code: FaultCode::StepRateExceeded, axis: None })));
+}
+
+/// A six-axis coordinated move planned by the host planner, fed in time
+/// order with at most 28 segments queued per axis (as the engine does), runs
+/// every axis on the shared MCU clock: they start in the same tick, stay at
+/// the same fraction of their distance, and finish in the same tick.
+#[test]
+fn six_axis_coordinated_move_runs_in_lockstep() {
+    use motioncore_motion::{plan_synchronized, to_segments, AxisLimits};
+    let mut core: McuCore<6, 32> = McuCore::new(BoardInfo {
+        target: "test",
+        board: "unit-test",
+        firmware_version: (0, 1, 0),
+        build_hash: 0,
+        capabilities: caps::STEPPER_STEP_DIR,
+        late_tolerance_us: DEFAULT_LATE_TOLERANCE_US,
+    });
+    let mut hal = SimHal::default();
+    let mut now = 1_000u64;
+    let mut seq = 0;
+    let mut send = |core: &mut McuCore<6, 32>, hal: &mut SimHal, now: u64, msg: HostMsg| {
+        seq += 1;
+        core.handle(HostFrame { seq, msg }, now, hal);
+        core.poll_outgoing().map(|f| f.msg)
+    };
+    let spu = [444.4, 266.7, 266.7, 213.3, 266.7, 444.4];
+    for a in 0..6u8 {
+        let c = AxisConfig { axis: a, min_steps: -400_000, max_steps: 400_000, max_rate: 60_000.0, ..cfg(a) };
+        assert!(matches!(send(&mut core, &mut hal, now, HostMsg::ConfigureAxis(c)), Some(McuMsg::Ack { .. })));
+        assert!(matches!(send(&mut core, &mut hal, now, HostMsg::Enable { axis: a }), Some(McuMsg::Ack { .. })));
+    }
+    let lim = |v: f64, a: f64| AxisLimits { min: -720.0, max: 720.0, max_velocity: v, max_acceleration: a };
+    let limits = [lim(60.0, 150.0), lim(60.0, 100.0), lim(60.0, 200.0), lim(60.0, 200.0), lim(60.0, 200.0), lim(90.0, 200.0)];
+    let start = [0.0; 6];
+    let goal = [-30.0, 20.0, -60.0, 75.0, 40.0, -180.0];
+    let plan = plan_synchronized(&start, &goal, &limits).unwrap();
+    let t0 = now + 50_000;
+    let mut segs: StdVec<Segment> =
+        plan.iter().enumerate().flat_map(|(i, p)| to_segments(p, i as u8, spu[i], t0, 20_000)).collect();
+    segs.sort_by_key(|s| (s.start_us, s.axis));
+    let target: StdVec<i64> = (0..6).map(|i| (goal[i] * spu[i]).round() as i64).collect();
+    let end_us = segs.iter().map(|s| s.end_us()).max().unwrap();
+
+    let mut next = 0;
+    let mut in_flight: StdVec<(u8, u64)> = StdVec::new();
+    let mut first_step: [Option<u64>; 6] = [None; 6];
+    let mut arrived: [Option<u64>; 6] = [None; 6];
+    let mut worst = 0.0f64;
+    while now < end_us + 20_000 {
+        // Host side: refill every 5 ms.
+        if now.is_multiple_of(5_000) {
+            in_flight.retain(|&(_, e)| e >= now);
+            while next < segs.len() {
+                let s = segs[next];
+                if in_flight.iter().filter(|(a, _)| *a == s.axis).count() >= 28 {
+                    break;
+                }
+                assert!(matches!(send(&mut core, &mut hal, now, HostMsg::QueueSegment(s)), Some(McuMsg::Ack { .. })), "{s:?}");
+                in_flight.push((s.axis, s.end_us()));
+                next += 1;
+            }
+            send(&mut core, &mut hal, now, HostMsg::Heartbeat);
+        }
+        now += 100;
+        core.tick(now, &mut hal);
+        assert_eq!(core.fault(), None, "at {now}");
+        let f: StdVec<f64> = (0..6).map(|i| hal.pos[i] as f64 / target[i] as f64).collect();
+        for i in 0..6 {
+            if first_step[i].is_none() && hal.pos[i] != 0 {
+                first_step[i] = Some(now);
+            }
+            if arrived[i].is_none() && hal.pos[i] == target[i] {
+                arrived[i] = Some(now);
+            }
+            // Fraction of the move, compared with the axis that has the most
+            // steps; slack of two steps of this axis.
+            worst = worst.max((f[i] - f[5]).abs() - 2.0 / target[i].abs() as f64);
+        }
+    }
+    assert!(worst <= 0.0, "axes drifted apart by {worst}");
+    assert_eq!((0..6).map(|i| hal.pos[i]).collect::<StdVec<_>>(), target);
+    let span = |v: &[Option<u64>; 6]| v.iter().map(|t| t.unwrap()).max().unwrap() - v.iter().map(|t| t.unwrap()).min().unwrap();
+    // Slowest axis needs a few ms for its first step under acceleration.
+    assert!(span(&first_step) <= 15_000, "start spread {} us: {first_step:?}", span(&first_step));
+    assert!(span(&arrived) <= 15_000, "finish spread {} us: {arrived:?}", span(&arrived));
+    assert!(arrived.iter().all(|t| t.unwrap() <= end_us + 100));
 }

@@ -81,8 +81,8 @@ Rules checked by the resolver:
 * All numbers finite; `axis` must be non-zero (it is normalised).
 * `radius`, when given, is positive, and all or nothing: every axis or none.
 
-Motion is still commanded per axis; geometry does not enable coordinated
-multi-axis moves. See `robot-profiles/rail-arm-virtual.toml` (a two-link arm
+Geometry is not needed for coordinated joint moves (`MoveJ`), which are
+planned in joint space; it is used for display and collision checking. See `robot-profiles/rail-arm-virtual.toml` (a two-link arm
 on a linear rail) and `robot-profiles/dummy-arm-virtual.toml` (a six-axis
 arm with link radii and a home-all plan) for complete examples.
 
@@ -90,9 +90,10 @@ arm with link radii and a home-all plan) for complete examples.
 
 With a `radius` on every axis, the engine models each link as capsules of
 that radius: from the joint to the joints mounted on it, and to its `tip`.
-Once **every** axis is homed, it checks each `move_to` and `jog` before
-starting it: the moving joint is swept from its current to its target
-position (0.5° or 1 mm steps) with the other joints held still, and the move
+Once **every** axis is homed, it checks each `move_to`, `jog` and `move_j`
+before starting it: the joints are swept from their current to their target
+positions along the move's straight joint-space path (every 0.5° or 1 mm of
+the joint that moves furthest), the others held still, and the move
 is refused with error `collision` when two links would come closer than
 2 mm, or a link (other than one standing on the base) would reach the floor
 (z = 0). A move that only increases the clearance is always allowed, so a

@@ -318,22 +318,35 @@ impl CollisionModel {
         worst
     }
 
-    /// Check moving joint `axis` from `q[axis]` to `to` with the others held
-    /// still. Returns the first pose on the way with less than `margin`
-    /// clearance. Moves that never get worse than the start are allowed, so
-    /// the robot can always back out of a bad pose.
+    /// First pose with less than the margin when joint `axis` moves from
+    /// `q[axis]` to `to` with the others held still. See [`Self::check_path`].
     pub fn check_sweep(&self, q: &[f64], axis: usize, to: f64) -> Result<(), Collision> {
-        let from = q[axis];
-        let step = if self.joints[axis].prismatic {
-            1.0
-        } else {
-            0.5
-        };
-        let n = (((to - from).abs() / step).ceil() as usize).clamp(1, 10_000);
-        let start = self.clearance(q).gap;
-        let mut qs = q.to_vec();
+        let mut target = q.to_vec();
+        target[axis] = to;
+        self.check_path(q, &target)
+    }
+
+    /// First pose with less than the margin on the straight joint-space line
+    /// from `from` to `to` (the path of a synchronised MoveJ), checked every
+    /// 0.5° / 1 mm of the joint that moves furthest. A move that never gets
+    /// worse than its start is allowed, so a robot that is already too close
+    /// can back out.
+    pub fn check_path(&self, from: &[f64], to: &[f64]) -> Result<(), Collision> {
+        let n = from
+            .iter()
+            .zip(to)
+            .zip(&self.joints)
+            .map(|((a, b), j)| (b - a).abs() / if j.prismatic { 1.0 } else { 0.5 })
+            .fold(0.0, f64::max)
+            .ceil()
+            .clamp(1.0, 10_000.0) as usize;
+        let start = self.clearance(from).gap;
+        let mut qs = from.to_vec();
         for k in 1..=n {
-            qs[axis] = from + (to - from) * k as f64 / n as f64;
+            let f = k as f64 / n as f64;
+            for (i, q) in qs.iter_mut().enumerate() {
+                *q = from[i] + (to[i] - from[i]) * f;
+            }
             let c = self.clearance(&qs);
             if c.gap < self.margin && c.gap < start - 1e-6 {
                 return Err(c);
@@ -493,6 +506,30 @@ mod tests {
         assert!(m.clearance(&into).gap < m.margin);
         m.check_sweep(&into, 4, 0.0).unwrap();
         assert!(m.check_sweep(&into, 4, 40.0).is_err());
+    }
+
+    #[test]
+    fn joint_space_paths_are_checked_between_safe_endpoints() {
+        let m = dummy();
+        let zero = [0.0; 6];
+        let work = [35.0, 0.0, 90.0, 30.0, -50.0, 90.0];
+        assert!(m.clearance(&zero).gap >= m.margin && m.clearance(&work).gap >= m.margin);
+        m.check_path(&zero, &work).unwrap();
+        // Both ends are well clear, but the straight joint-space path between
+        // them swings the flange through the base column (over 15 mm deep).
+        let a = [-120.0, 20.0, 180.0, 130.0, 80.0, -10.0];
+        let b = [150.0, -35.0, 150.0, -145.0, 60.0, 465.0];
+        assert!(m.clearance(&a).gap > 10.0 && m.clearance(&b).gap > 10.0);
+        let e = m.check_path(&a, &b).unwrap_err();
+        assert_eq!((e.a.as_str(), e.b.as_str()), ("j1", "j6"), "{e:?}");
+        // A single-joint path is the same as a sweep.
+        let rest = [0.0, -73.0, 180.0, 0.0, 0.0, 0.0];
+        let mut to = rest;
+        to[4] = 60.0;
+        assert_eq!(
+            m.check_path(&rest, &to).unwrap_err().at,
+            m.check_sweep(&rest, 4, 60.0).unwrap_err().at
+        );
     }
 
     #[test]

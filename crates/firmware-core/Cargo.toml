@@ -10,3 +10,7 @@ motioncore-firmware-hal = { workspace = true }
 motioncore-firmware-stepper = { workspace = true }
 motioncore-protocol = { workspace = true }
 heapless = { workspace = true }
+
+[dev-dependencies]
+# Host-side planner, to test the runtime with real coordinated moves.
+motioncore-motion = { workspace = true }

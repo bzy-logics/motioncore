@@ -1281,6 +1281,7 @@ dependencies = [
  "heapless",
  "motioncore-firmware-hal",
  "motioncore-firmware-stepper",
+ "motioncore-motion",
  "motioncore-protocol",
 ]
 

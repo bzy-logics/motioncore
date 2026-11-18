@@ -36,7 +36,8 @@ The rule that holds everything together: **the engine is the only owner of robot
 | External WASM plugins | Manifests validated; **execution not yet implemented** |
 | ratavyr gateway (REST, WebSocket, roles, audit) | Implemented |
 | sindrava UI | Implemented; Robot Composer is read-only |
-| Coordinated multi-axis motion | **Not yet** — one axis is commanded at a time |
+| Coordinated joint moves (MoveJ) | Implemented: listed joints start and finish together; shown on a simulated six-axis arm |
+| Cartesian (straight-line tool) moves | **Not yet** |
 | Multiple MCUs per robot | **Not yet** — one MCU per robot |
 
 See [Roadmap & status](/internals/roadmap) for the full list.

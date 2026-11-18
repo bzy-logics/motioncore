@@ -86,6 +86,16 @@ enum Cmd {
         #[arg(long)]
         velocity: Option<f64>,
     },
+    /// Coordinated joint move: listed axes start and finish together
+    /// (all must be homed), e.g. `movej j1=30 j2=-10 --speed 0.5`.
+    Movej {
+        /// AXIS=POSITION pairs, axis units.
+        #[arg(required = true, value_parser = parse_joint_target, allow_negative_numbers = true)]
+        targets: Vec<(String, f64)>,
+        /// Fraction of every axis' maximum velocity, 0 < SPEED <= 1.
+        #[arg(long)]
+        speed: Option<f64>,
+    },
     Home {
         axis: String,
     },
@@ -224,6 +234,10 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Jog { axis, delta, velocity } => client::command(&addr, |mut c| async move { c.engine.jog(pb::JogRequest { axis, delta, velocity }).await }).await,
         Cmd::Move { axis, position, velocity } => client::command(&addr, |mut c| async move { c.engine.move_to(pb::MoveToRequest { axis, position, velocity }).await }).await,
         Cmd::Home { axis } => client::command(&addr, |mut c| async move { c.engine.home(pb::HomeRequest { axis }).await }).await,
+        Cmd::Movej { targets, speed } => {
+            let targets = targets.into_iter().map(|(axis, position)| pb::JointTarget { axis, position }).collect();
+            client::command(&addr, |mut c| async move { c.engine.move_j(pb::MoveJRequest { targets, speed_scale: speed }).await }).await
+        }
         Cmd::HomeAll => client::command(&addr, |mut c| async move { c.engine.home_all(pb::HomeAllRequest {}).await }).await,
         Cmd::Mcu { cmd: McuCmd::List } => {
             let ports = builder::list_ports()?;
@@ -400,4 +414,14 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
             }
         }
     }
+}
+
+/// Parse `AXIS=POSITION`.
+fn parse_joint_target(s: &str) -> Result<(String, f64), String> {
+    let (axis, pos) = s.split_once('=').ok_or_else(|| format!("expected AXIS=POSITION, got {s:?}"))?;
+    let pos: f64 = pos.trim().parse().map_err(|_| format!("invalid position in {s:?}"))?;
+    if axis.trim().is_empty() || !pos.is_finite() {
+        return Err(format!("invalid joint target {s:?}"));
+    }
+    Ok((axis.trim().to_string(), pos))
 }
