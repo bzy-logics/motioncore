@@ -26,7 +26,7 @@ This is the `motioncore` repository — one of three:
 | [ratavyr](https://github.com/bzy-logics/ratavyr) | Go REST/WebSocket gateway, auth, firmware job orchestration | optional |
 | [sindrava](https://github.com/bzy-logics/sindrava) | Vite + React + Three.js dashboard | optional |
 
-> **Status: v0.2 development.** Runs end-to-end in simulation. The STM32F411
+> **Status: v0.3.0** (see [CHANGELOG.md](CHANGELOG.md)); v0.4 development on `main`. Runs end-to-end in simulation. The STM32F411
 > and RP2040 firmware compile and are host-tested, but have **not** been
 > validated on hardware. Nothing here is a certified safety system — always
 > use an independent hardware E-stop that removes driver power.

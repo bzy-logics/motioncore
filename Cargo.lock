@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-board-rp2040"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-board-stm32f4"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -1184,7 +1184,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-builtin-plugins"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "motioncore-kinematics",
  "motioncore-plugin-runtime",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1215,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "motioncore-builtin-plugins",
@@ -1239,7 +1239,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-device-graph"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1248,7 +1248,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-engine-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "prost",
  "protox",
@@ -1258,7 +1258,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-firmware-builder"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "motioncore-device-graph",
@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-firmware-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "heapless",
  "motioncore-firmware-hal",
@@ -1285,11 +1285,11 @@ dependencies = [
 
 [[package]]
 name = "motioncore-firmware-hal"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "motioncore-firmware-pio-step"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "motioncore-firmware-core",
  "motioncore-protocol",
@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-firmware-stepper"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "heapless",
  "motioncore-firmware-hal",
@@ -1306,14 +1306,14 @@ dependencies = [
 
 [[package]]
 name = "motioncore-kinematics"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "motioncore-mcu-manager"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "motioncore-protocol",
  "motioncore-simulator",
@@ -1323,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-motion"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "motioncore-protocol",
  "thiserror 2.0.21",
@@ -1331,7 +1331,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-plugin-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "motioncore-plugin-sdk",
  "serde",
@@ -1341,7 +1341,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-plugin-sdk"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "semver 1.0.28",
  "serde",
@@ -1350,7 +1350,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-protocol"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "heapless",
  "postcard",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-safety"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1368,7 +1368,7 @@ dependencies = [
 
 [[package]]
 name = "motioncore-simulator"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "motioncore-device-graph",
  "motioncore-firmware-core",
