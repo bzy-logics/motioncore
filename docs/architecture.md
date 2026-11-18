@@ -56,6 +56,12 @@ boards/stm32f4 ──┐   boards/rp2040 ──┐        crates/simulator ─�
 machines that spread them evenly over the next tick window with guaranteed
 pulse and direction timing (see [rp2040.md](rp2040.md)).
 
+The HAL is being reworked per [ADR 0002](adr/0002-hal-architecture.md)
+(accepted): capability traits with no implicit defaults, window-level step
+generation (`StepGen`) instead of one `step` call per pulse, and a
+`safe_shutdown()` contract for panics and faults. The layering above stays
+as shown.
+
 Board crates are workspace members but excluded from `default-members`; they
 are cross-compiled with the `firmware` profile (`opt-level = "s"`, LTO,
 `panic = "abort"`). Linker arguments live in the board's `build.rs` so builds
@@ -119,6 +125,8 @@ hardware E-stop circuit; it cannot replace one.
 | Homing | single-switch search, position assigned at trigger | back-off + slow second touch |
 | Go ↔ Rust | gRPC (tonic / grpc-go), proto compiled with `protox`/`buf` (no `protoc`) | — |
 | Flashing | per board: `probe-rs` over SWD (STM32F411), UF2 to the BOOTSEL drive (RP2040) | DFU for STM32 |
+
+Later architecture decisions are recorded as ADRs in [adr/](adr/README.md).
 
 ## Known limitations
 
