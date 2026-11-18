@@ -24,7 +24,13 @@ MotionCore is pre-1.0, and so is its engine API: `API_VERSION` is `0.MINOR.PATCH
 - Releases are git tags `engine-api/v0.MINOR.PATCH`.
 - From 1.0 on, the usual semver rule applies: the major version marks breaking changes.
 
-The engine-api version is independent of MotionCore's milestones: engine-api `0.2.0` ships in MotionCore v0.3.
+The engine-api version is independent of MotionCore's release version; each release states the contract it ships.
+
+| MotionCore | engine-api | MCU protocol | Plugin API | ratavyr | sindrava |
+|---|---|---|---|---|---|
+| v0.3.0 | 0.3.0 | 1 | `"0"` | v0.3.0 | v0.3.0 |
+
+MotionCore releases are git tags `vMAJOR.MINOR.PATCH`, separate from the `engine-api/…` contract tags; changes are listed in `CHANGELOG.md`.
 
 | engine-api | Change | Earlier number |
 |---|---|---|
