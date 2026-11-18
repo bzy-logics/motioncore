@@ -657,6 +657,8 @@ async fn move_l_keeps_the_tool_on_a_straight_line() {
     let mut worst_turn = 0.0f64;
     let mut progress = -1.0f64;
     let mut moving = 0;
+    let mut last_mid: Option<Instant> = None;
+    let mut worst_gap = Duration::ZERO;
     let started = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
@@ -672,6 +674,11 @@ async fn move_l_keeps_the_tool_on_a_straight_line() {
         assert!(along >= progress - 0.05, "went backwards: {along} after {progress}");
         if along > 1.0 && along < len - 1.0 {
             moving += 1;
+            let now = Instant::now();
+            if let Some(prev) = last_mid {
+                worst_gap = worst_gap.max(now - prev);
+            }
+            last_mid = Some(now);
         }
         progress = along;
         if t.state == pb::RobotState::Ready as i32 && along > 1.0 {
@@ -684,7 +691,10 @@ async fn move_l_keeps_the_tool_on_a_straight_line() {
     // Off the line by less than the step resolution of the joints.
     assert!(worst_off < 0.3, "tool left the line by {worst_off:.3} mm");
     assert!(worst_turn < 0.1, "tool turned by {worst_turn:.3} deg");
-    assert!(moving > 50, "{moving} samples mid-line");
+    // Coverage of the line, independent of how fast the machine polls: enough
+    // samples and no long gap between them.
+    assert!(moving >= 20, "{moving} samples mid-line");
+    assert!(worst_gap <= Duration::from_millis(250), "gap of {worst_gap:?} between mid-line samples");
     // 126.5 mm at 60 mm/s with 500 mm/s² ramps: about 2.2 s.
     assert!((2.0..3.2).contains(&took), "took {took:.2} s");
     let end = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
