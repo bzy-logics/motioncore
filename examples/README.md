@@ -30,3 +30,10 @@ target/debug/motioncore start --config my-tcp-profile.toml
 The contract is `crates/engine-api/proto/motioncore/engine/v1/engine.proto`
 (`motioncore engine-api proto` prints it). Errors carry the MotionCore code
 in the `motioncore-error-code` trailer.
+
+## Vision-guided pick and place (Python client)
+
+[`sim-vision-pick/`](sim-vision-pick/): a simulated camera and fake AI
+detector drive the six-axis arm (`robot-profiles/dummy-arm-virtual.toml`)
+through ratavyr's REST/WebSocket API. Runs entirely on a client PC,
+standard library only. See its README.
