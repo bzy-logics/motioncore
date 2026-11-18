@@ -413,3 +413,114 @@ async fn home_all_runs_groups_together_and_collisions_are_refused() {
     // Rolling the flange cannot collide.
     c.engine.move_to(pb::MoveToRequest { axis: "j6".into(), position: 0.0, velocity: None }).await.unwrap();
 }
+
+/// Joint values (measured, commanded) by axis id.
+fn joints(t: &pb::Telemetry) -> Vec<(f64, f64)> {
+    t.axes.iter().map(|a| (a.measured_position, a.commanded_position)).collect()
+}
+
+fn targets(q: &[f64]) -> Vec<pb::JointTarget> {
+    ["j1", "j2", "j3", "j4", "j5", "j6"].iter().zip(q).map(|(a, &p)| pb::JointTarget { axis: a.to_string(), position: p }).collect()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_j_moves_six_axes_together_on_a_straight_joint_path() {
+    let mut c = start_with("dummy-arm-virtual.toml", false).await;
+    let info = c.engine.get_info(pb::GetInfoRequest {}).await.unwrap().into_inner();
+    assert_eq!(info.api_version, motioncore_engine_api::API_VERSION);
+    c.engine.enable(pb::EnableRequest {}).await.unwrap();
+    c.wait_state("ready", T).await;
+
+    // Positions are unknown before homing.
+    let goal = [-30.0, 20.0, 120.0, -60.0, 40.0, -540.0];
+    let e = c.engine.move_j(pb::MoveJRequest { targets: targets(&goal), speed_scale: None }).await.unwrap_err();
+    assert_eq!(e.metadata().get("motioncore-error-code").unwrap(), "not_homed");
+
+    c.engine.home_all(pb::HomeAllRequest {}).await.unwrap();
+    c.wait_for("homed", Duration::from_secs(60), |s| s["state"] == "ready" && s["axes"].as_array().unwrap().iter().all(|a| a["homed"] == true))
+        .await;
+    let t0 = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    let start: Vec<f64> = joints(&t0).iter().map(|j| j.1).collect();
+
+    // Rejected requests leave the robot where it is.
+    let bad = |e: tonic::Status| e.metadata().get("motioncore-error-code").unwrap().to_str().unwrap().to_string();
+    let mut dup = targets(&goal);
+    dup.push(pb::JointTarget { axis: "j1".into(), position: 0.0 });
+    assert_eq!(bad(c.engine.move_j(pb::MoveJRequest { targets: dup, speed_scale: None }).await.unwrap_err()), "bad_request");
+    assert_eq!(bad(c.engine.move_j(pb::MoveJRequest { targets: vec![], speed_scale: None }).await.unwrap_err()), "bad_request");
+    let mut over = goal;
+    over[1] = 95.0;
+    let e = c.engine.move_j(pb::MoveJRequest { targets: targets(&over), speed_scale: None }).await.unwrap_err();
+    assert_eq!(bad(e.clone()), "validation_failed");
+    assert!(e.message().contains("j2"), "{}", e.message());
+    for s in [0.0, 1.5] {
+        assert_eq!(bad(c.engine.move_j(pb::MoveJRequest { targets: targets(&goal), speed_scale: Some(s) }).await.unwrap_err()), "validation_failed");
+    }
+
+    // The coordinated move: sample measured positions from MCU telemetry.
+    c.engine.move_j(pb::MoveJRequest { targets: targets(&goal), speed_scale: None }).await.unwrap();
+    let mut samples: Vec<(Instant, Vec<f64>)> = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let t = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+        assert!(t.fault.is_none(), "fault during move_j: {:?}", t.fault);
+        samples.push((Instant::now(), joints(&t).iter().map(|j| j.0).collect()));
+        if t.state == pb::RobotState::Ready as i32 && samples.len() > 3 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "move_j did not finish");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let frac = |q: &[f64], i: usize| (q[i] - start[i]) / (goal[i] - start[i]);
+    let spu = [444.444444, 266.666667, 266.666667, 213.333333, 266.666667, 444.444444];
+    let mut mid = 0;
+    for (_, q) in &samples {
+        let f: Vec<f64> = (0..6).map(|i| frac(q, i)).collect();
+        // Every axis is at the same fraction of its own distance: they start,
+        // move and stop together (one step of slack per axis).
+        for i in 0..6 {
+            let tol = 1.5 / spu[i] / (goal[i] - start[i]).abs() + 0.004;
+            assert!((f[i] - f[0]).abs() <= tol, "axis j{} at {:.4} while j1 at {:.4}: {q:?}", i + 1, f[i], f[0]);
+        }
+        if f[0] > 0.1 && f[0] < 0.9 {
+            mid += 1;
+        }
+    }
+    assert!(mid >= 10, "too few samples in mid-move ({mid})");
+    let end = samples.last().unwrap();
+    for (i, (q, g)) in end.1.iter().zip(goal).enumerate() {
+        assert!((q - g).abs() < 0.01, "j{} ended at {q}", i + 1);
+    }
+    let first_move = samples.iter().find(|(_, q)| frac(q, 0) > 0.0).unwrap().0;
+    let arrived = samples.iter().find(|(_, q)| (0..6).all(|i| (q[i] - goal[i]).abs() < 0.01)).unwrap().0;
+    let took = (arrived - first_move).as_secs_f64();
+    // Lead axis j1: 140 deg at 60 deg/s and 150 deg/s^2 is 2.73 s.
+    assert!((2.4..3.3).contains(&took), "move took {took:.2} s");
+
+    // A path whose ends are clear but which swings the flange through the
+    // base column is refused before anything moves.
+    let a = [-120.0, 20.0, 180.0, 130.0, 80.0, -10.0];
+    let b = [150.0, -35.0, 150.0, -145.0, 60.0, 465.0];
+    c.engine.move_j(pb::MoveJRequest { targets: targets(&a), speed_scale: None }).await.unwrap();
+    c.wait_state("running", T).await;
+    c.wait_state("ready", Duration::from_secs(20)).await;
+    let e = c.engine.move_j(pb::MoveJRequest { targets: targets(&b), speed_scale: Some(0.5) }).await.unwrap_err();
+    assert_eq!(bad(e.clone()), "collision");
+    assert!(e.message().contains("j1 and j6") && e.message().contains(" at j1 "), "{}", e.message());
+    let still = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    assert!(joints(&still).iter().zip(a).all(|(j, q)| (j.0 - q).abs() < 0.01));
+
+    // Listing only some axes moves those and holds the rest.
+    c.engine
+        .move_j(pb::MoveJRequest {
+            targets: vec![pb::JointTarget { axis: "j1".into(), position: -100.0 }, pb::JointTarget { axis: "j3".into(), position: 160.0 }],
+            speed_scale: Some(0.5),
+        })
+        .await
+        .unwrap();
+    c.wait_state("running", T).await;
+    let done = c.wait_state("ready", Duration::from_secs(20)).await;
+    let q: Vec<f64> = done["axes"].as_array().unwrap().iter().map(|x| x["measured_position"].as_f64().unwrap()).collect();
+    let want = [-100.0, 20.0, 160.0, 130.0, 80.0, -10.0];
+    assert!(q.iter().zip(want).all(|(x, y)| (x - y).abs() < 0.01), "{q:?}");
+}

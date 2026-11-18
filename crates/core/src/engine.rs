@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use motioncore_device_graph::{AxisSection, Direction, JointKind, ResolvedMcu, ResolvedRobot, Transport, Unit};
 use motioncore_kinematics::collision::{CollisionModel, JointSpec};
 use motioncore_mcu_manager::{McuError, McuEvent, McuLink};
-use motioncore_motion::{plan_axis_move, to_segments, AxisLimits, MotionError};
+use motioncore_motion::{plan_axis_move, plan_synchronized_scaled, to_segments, AxisLimits, MotionError};
 use motioncore_engine_api::v1 as pb;
 use motioncore_plugin_runtime::{PluginKind, PluginState, Registry};
 use motioncore_protocol::{
@@ -56,8 +56,9 @@ struct Inner {
     axes: Vec<AxisRt>,
     /// Segments planned but not yet sent to the MCU.
     pending: VecDeque<Segment>,
-    /// End times (MCU clock) of segments sent and possibly still queued.
-    in_flight: VecDeque<u64>,
+    /// MCU channel and end time (MCU clock) of segments sent and possibly
+    /// still queued. The MCU queues segments per axis.
+    in_flight: VecDeque<(u8, u64)>,
     last_end_us: u64,
     /// Bumped whenever planned motion is discarded (stop, fault, e-stop).
     motion_gen: u64,
@@ -483,16 +484,26 @@ impl Engine {
                 let Some(link) = g.link.clone() else { continue };
                 let cap = g.identity.as_ref().map(|i| i.queue_capacity as usize).unwrap_or(0);
                 let now = link.mcu_now_us();
-                while g.in_flight.front().is_some_and(|&end| end < now) {
-                    g.in_flight.pop_front();
+                g.in_flight.retain(|&(_, end)| end >= now);
+                // Each axis has its own MCU queue; keep a few slots of slack
+                // per axis. Pending segments are in time order across axes,
+                // so stopping at the first full axis keeps every axis fed
+                // equally far ahead.
+                let per_axis = cap.saturating_sub(4);
+                let mut queued = [0usize; 256];
+                for &(ch, _) in &g.in_flight {
+                    queued[ch as usize] += 1;
                 }
-                let budget = cap.saturating_sub(4).saturating_sub(g.in_flight.len());
                 let mut acks = Vec::new();
-                for _ in 0..budget {
-                    let Some(s) = g.pending.pop_front() else { break };
+                while let Some(&s) = g.pending.front() {
+                    if queued[s.axis as usize] >= per_axis {
+                        break;
+                    }
+                    g.pending.pop_front();
                     match link.submit(HostMsg::QueueSegment(s)) {
                         Ok(a) => {
-                            g.in_flight.push_back(s.end_us());
+                            g.in_flight.push_back((s.axis, s.end_us()));
+                            queued[s.axis as usize] += 1;
                             acks.push(a);
                         }
                         Err(McuError::Backpressure) => {
@@ -854,6 +865,99 @@ impl Engine {
         g.axes[i].commanded = target;
         drop(g);
         self.log("debug", format!("move {id} -> {target:.3} ({:.3} s)", profile.duration()));
+        Ok(())
+    }
+
+    /// Coordinated joint move (MoveJ): every listed axis starts and finishes
+    /// together on a straight line in joint space, using the synchronised
+    /// planner; unlisted axes hold their position.
+    pub async fn move_joints(&self, targets: &[(String, f64)], speed_scale: Option<f64>) -> Result<(), ApiError> {
+        if targets.is_empty() {
+            return Err(ApiError::new("bad_request", "at least one joint target is required"));
+        }
+        let mut idx = Vec::with_capacity(targets.len());
+        for (axis, pos) in targets {
+            let i = self.axis_index(axis)?;
+            if idx.contains(&i) {
+                return Err(ApiError::new("bad_request", format!("axis {axis} is listed twice")));
+            }
+            if !pos.is_finite() {
+                return Err(ApiError::new("validation_failed", format!("target of {axis} must be finite")));
+            }
+            idx.push(i);
+        }
+        let scale = speed_scale.unwrap_or(1.0);
+        if !(scale.is_finite() && scale > 0.0 && scale <= 1.0) {
+            return Err(ApiError::new("validation_failed", "speed_scale must be in (0, 1]"));
+        }
+
+        let mut g = self.inner.lock().unwrap();
+        g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+        if let Some(&i) = idx.iter().find(|&&i| !g.axes[i].homed) {
+            return Err(ApiError::new("not_homed", format!("axis {} must be homed before a joint move", g.axes[i].cfg.id)));
+        }
+        let goals: Vec<f64> = targets.iter().map(|(_, p)| *p).collect();
+        for (&i, &t) in idx.iter().zip(&goals) {
+            let c = &g.axes[i].cfg;
+            if t < c.min || t > c.max {
+                return Err(ApiError::new("validation_failed", format!("target {t} of {} outside limits [{}, {}]", c.id, c.min, c.max)));
+            }
+        }
+        let starts: Vec<f64> = idx.iter().map(|&i| g.axes[i].commanded).collect();
+        let limits: Vec<AxisLimits> = idx
+            .iter()
+            .map(|&i| {
+                let c = &g.axes[i].cfg;
+                AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
+            })
+            .collect();
+        let profiles = plan_synchronized_scaled(&starts, &goals, &limits, scale).map_err(motion_err)?;
+        let duration = profiles.iter().map(|p| p.duration()).fold(0.0, f64::max);
+        if duration == 0.0 {
+            return Ok(());
+        }
+        // Self-collision check along the whole joint-space path, once every
+        // axis is homed (the model needs the full pose).
+        if let Some((model, order)) = &self.collision {
+            if g.axes.iter().all(|x| x.homed) {
+                let target_of = |k: usize| idx.iter().position(|&i| i == k).map_or(g.axes[k].commanded, |n| goals[n]);
+                let from: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
+                let to: Vec<f64> = order.iter().map(|&k| target_of(k)).collect();
+                if let Err(c) = model.check_path(&from, &to) {
+                    let at: Vec<String> = order
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, k)| idx.contains(k))
+                        .map(|(m, &k)| format!("{} {:.1}", g.axes[k].cfg.id, c.at[m]))
+                        .collect();
+                    return Err(ApiError::new("collision", format!("refused: {c} at {}", at.join(", "))));
+                }
+            }
+        }
+        // One time grid for every axis: the profiles share their phase
+        // times, so their segments start and end at the same instants.
+        let start_us = link.mcu_now_us() + LEAD_US;
+        let mut segs: Vec<Segment> = Vec::new();
+        for (p, &i) in profiles.iter().zip(&idx) {
+            if p.distance != 0.0 {
+                let c = &g.axes[i].cfg;
+                segs.extend(to_segments(p, c.channel, c.steps_per_unit, start_us, MAX_SEGMENT_US));
+            }
+        }
+        if segs.is_empty() {
+            return Ok(());
+        }
+        segs.sort_by_key(|s| (s.start_us, s.axis));
+        g.sup.apply(Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        g.last_end_us = segs.iter().map(|s| s.end_us()).max().unwrap_or(start_us);
+        g.pending.extend(segs);
+        for (&i, &t) in idx.iter().zip(&goals) {
+            g.axes[i].commanded = t;
+        }
+        let summary: Vec<String> = idx.iter().zip(&goals).map(|(&i, t)| format!("{} {t:.2}", g.axes[i].cfg.id)).collect();
+        drop(g);
+        self.log("debug", format!("move_j {} ({duration:.3} s at {:.0}% speed)", summary.join(", "), scale * 100.0));
         Ok(())
     }
 

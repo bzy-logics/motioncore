@@ -100,6 +100,11 @@ impl EngineService for EngineSvc {
         let r = r.into_inner();
         done(self.engine.move_to(&r.axis, r.position, r.velocity).await)
     }
+    async fn move_j(&self, r: Request<pb::MoveJRequest>) -> Res<pb::CommandResponse> {
+        let r = r.into_inner();
+        let targets: Vec<(String, f64)> = r.targets.into_iter().map(|t| (t.axis, t.position)).collect();
+        done(self.engine.move_joints(&targets, r.speed_scale).await)
+    }
     async fn home(&self, r: Request<pb::HomeRequest>) -> Res<pb::CommandResponse> {
         done(self.engine.home(&r.into_inner().axis).await)
     }

@@ -75,7 +75,8 @@ rail, drawn as a connected robot in the web UI), use
 The six-axis profile also gives its links a thickness, so once homed the
 engine refuses moves that would make the arm collide with itself, and a
 home-all plan (`motioncore home-all`) that homes the wrist joints together,
-then the arm joints together.
+then the arm joints together. Coordinated joint moves run all six joints
+together: `motioncore movej j1=60 j2=30 j3=120 j4=90 j5=-60 j6=180`.
 
 The engine listens on `unix:///run/motioncore/engine.sock` on Linux and
 `tcp://127.0.0.1:7600` elsewhere (`--listen`, or `MOTIONCORE_ENGINE_ADDR` for clients).

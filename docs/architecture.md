@@ -122,8 +122,9 @@ hardware E-stop circuit; it cannot replace one.
 
 ## Known limitations
 
-* One MCU per robot; single-axis motion at a time (`motion::plan_synchronized`
-  exists but is not wired up). Telemetry has one MCU block.
+* One MCU per robot; telemetry has one MCU block. Moves are joint-space
+  only: single-axis moves and coordinated joint moves (`MoveJ`), no Cartesian
+  moves or blending.
 * "Measured" position is the MCU step counter — no encoder feedback yet.
 * Serial transport, flashing and the STM32F411 and RP2040 firmware are
   untested on hardware.

@@ -203,16 +203,37 @@ pub fn plan_synchronized(
     targets: &[f64],
     limits: &[AxisLimits],
 ) -> Result<Vec<Trapezoid>, MotionError> {
+    plan_synchronized_scaled(starts, targets, limits, 1.0)
+}
+
+/// [`plan_synchronized`] with every axis' velocity limit scaled by
+/// `speed_scale` (0 < scale ≤ 1). Acceleration limits are not scaled.
+///
+/// Because every axis shares the same phase times, each one follows
+/// `start + distance · s(t)` with the same normalised `s(t)`: the path is a
+/// straight line in joint space, and all axes start, cruise, decelerate and
+/// stop together.
+pub fn plan_synchronized_scaled(
+    starts: &[f64],
+    targets: &[f64],
+    limits: &[AxisLimits],
+    speed_scale: f64,
+) -> Result<Vec<Trapezoid>, MotionError> {
     if starts.len() != targets.len() || targets.len() != limits.len() {
         return Err(MotionError::InvalidAxisCount { starts: starts.len(), targets: targets.len(), limits: limits.len() });
+    }
+    let scale = finite("speed_scale", speed_scale)?;
+    if !(scale > 0.0 && scale <= 1.0) {
+        return Err(MotionError::NonPositive("speed_scale (0 < scale <= 1)"));
     }
     if starts.is_empty() {
         return Ok(Vec::new());
     }
+    let scaled: Vec<AxisLimits> = limits.iter().map(|l| AxisLimits { max_velocity: l.max_velocity * speed_scale, ..*l }).collect();
     let individual: Vec<Trapezoid> = starts
         .iter()
         .zip(targets)
-        .zip(limits)
+        .zip(&scaled)
         .map(|((&s, &t), l)| plan_axis_move(s, t, None, l))
         .collect::<Result<_, _>>()?;
     let lead = individual
@@ -221,14 +242,35 @@ pub fn plan_synchronized(
         .max_by(|a, b| a.duration().total_cmp(&b.duration()))
         .expect("at least one axis");
     let (mut ta, mut tc) = (lead.t_accel, lead.t_cruise);
+    if ta + tc == 0.0 {
+        // Nothing moves.
+        return Ok(individual);
+    }
 
-    // Stretch the shared timing until every axis fits its limits.
-    for _ in 0..64 {
-        let mut ok = true;
-        let mut out = Vec::with_capacity(individual.len());
-        for (p, l) in individual.iter().zip(limits) {
+    // Stretch the shared timing by the smallest factor k ≥ 1 that keeps every
+    // axis within its limits. With phase times k·ta and k·tc an axis moving d
+    // needs v = d / (k·(ta+tc)) and a = d / (k²·ta·(ta+tc)).
+    let mut k: f64 = 1.0;
+    for (p, l) in individual.iter().zip(&scaled) {
+        let d = p.distance.abs();
+        if d == 0.0 {
+            continue;
+        }
+        k = k.max(d / (l.max_velocity * (ta + tc)));
+        if ta > 0.0 {
+            k = k.max((d / (l.max_acceleration * ta * (ta + tc))).sqrt());
+        }
+    }
+    // Rounding margin, so v and a never exceed a limit by an ulp.
+    k *= 1.0 + 1e-12;
+    ta *= k;
+    tc *= k;
+
+    let out: Vec<Trapezoid> = individual
+        .iter()
+        .map(|p| {
             let d = p.distance.abs();
-            let (v, a) = if d == 0.0 || ta + tc == 0.0 {
+            let (v, a) = if d == 0.0 {
                 (0.0, 0.0)
             } else if ta == 0.0 {
                 (d / tc, 0.0)
@@ -236,21 +278,13 @@ pub fn plan_synchronized(
                 let v = d / (ta + tc);
                 (v, v / ta)
             };
-            if v > l.max_velocity * (1.0 + 1e-9) || a > l.max_acceleration * (1.0 + 1e-9) {
-                ok = false;
-            }
-            out.push(Trapezoid { start: p.start, distance: p.distance, v_peak: v, accel: a, t_accel: ta, t_cruise: tc });
-        }
-        if ok {
-            for (p, l) in out.iter().zip(limits) {
-                validate(p, l)?;
-            }
-            return Ok(out);
-        }
-        ta *= 1.1;
-        tc *= 1.1;
+            Trapezoid { start: p.start, distance: p.distance, v_peak: v, accel: a, t_accel: ta, t_cruise: tc }
+        })
+        .collect();
+    for (p, l) in out.iter().zip(&scaled) {
+        validate(p, l)?;
     }
-    Err(MotionError::Infeasible("synchronisation"))
+    Ok(out)
 }
 
 /// Split a profile into MCU segments.
@@ -386,6 +420,72 @@ mod tests {
             validate(p, l).unwrap();
         }
         assert!((ps[2].position(d) + 10.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    const L: AxisLimits = AxisLimits { min: -720.0, max: 720.0, max_velocity: 60.0, max_acceleration: 100.0 };
+
+    fn six() -> [AxisLimits; 6] {
+        [L, AxisLimits { max_velocity: 30.0, ..L }, L, AxisLimits { max_acceleration: 40.0, ..L }, L, AxisLimits { max_velocity: 90.0, ..L }]
+    }
+
+    #[test]
+    fn six_axes_share_one_timing_and_a_straight_joint_path() {
+        let starts = [0.0, -73.0, 180.0, -180.0, 120.0, -720.0];
+        let targets = [35.0, 0.0, 90.0, 30.0, -50.0, 90.0];
+        let ps = plan_synchronized(&starts, &targets, &six()).unwrap();
+        let d = ps[0].duration();
+        for (p, l) in ps.iter().zip(six()) {
+            assert_eq!(p.t_accel, ps[0].t_accel);
+            assert_eq!(p.t_cruise, ps[0].t_cruise);
+            validate(p, &l).unwrap();
+        }
+        // Straight line in joint space: every axis is at the same fraction.
+        for k in 0..=20 {
+            let t = d * k as f64 / 20.0;
+            let f0 = (ps[0].position(t) - starts[0]) / (targets[0] - starts[0]);
+            for i in 1..6 {
+                let f = (ps[i].position(t) - starts[i]) / (targets[i] - starts[i]);
+                assert!((f - f0).abs() < 1e-9, "axis {i} at {t}: {f} vs {f0}");
+            }
+        }
+        // Some axis is exactly at a limit: the timing is not padded.
+        let tight = ps.iter().zip(six()).any(|(p, l)| {
+            (p.v_peak / l.max_velocity - 1.0).abs() < 1e-6 || (p.accel / l.max_acceleration - 1.0).abs() < 1e-6
+        });
+        assert!(tight, "the stretch must be minimal");
+    }
+
+    #[test]
+    fn segments_of_all_axes_share_the_time_grid() {
+        let ps = plan_synchronized(&[0.0, 0.0, 0.0], &[90.0, -20.0, 5.0], &[L, L, L]).unwrap();
+        let grids: Vec<Vec<(u64, u32)>> =
+            ps.iter().enumerate().map(|(i, p)| to_segments(p, i as u8, 100.0, 1_000, 20_000).iter().map(|s| (s.start_us, s.duration_us)).collect()).collect();
+        assert!(grids.iter().all(|g| g == &grids[0]));
+    }
+
+    #[test]
+    fn speed_scale_slows_the_move_down() {
+        let full = plan_synchronized(&[0.0, 0.0], &[300.0, 100.0], &[L, L]).unwrap();
+        let half = plan_synchronized_scaled(&[0.0, 0.0], &[300.0, 100.0], &[L, L], 0.5).unwrap();
+        assert!(half[0].duration() > full[0].duration() * 1.5);
+        assert!(half[0].v_peak <= 30.0 + 1e-9);
+        for bad in [0.0, -0.5, 1.5, f64::NAN] {
+            assert!(plan_synchronized_scaled(&[0.0], &[1.0], &[L], bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn axes_that_do_not_move_stay_put() {
+        let ps = plan_synchronized(&[10.0, 5.0], &[50.0, 5.0], &[L, L]).unwrap();
+        assert_eq!(ps[1].distance, 0.0);
+        assert!((ps[1].position(ps[0].duration() / 2.0) - 5.0).abs() < 1e-12);
+        let none = plan_synchronized(&[1.0, 2.0], &[1.0, 2.0], &[L, L]).unwrap();
+        assert!(none.iter().all(|p| p.duration() == 0.0));
     }
 }
 

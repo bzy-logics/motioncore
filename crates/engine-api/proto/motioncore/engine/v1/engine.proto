@@ -47,6 +47,10 @@ service EngineService {
   rpc Disable(DisableRequest) returns (CommandResponse);
   rpc Jog(JogRequest) returns (CommandResponse);
   rpc MoveTo(MoveToRequest) returns (CommandResponse);
+  // Coordinated joint move: every listed axis starts and finishes at the same
+  // time on a straight line in joint space; unlisted axes hold. Every listed
+  // axis must be homed. Added in 0.2.0.
+  rpc MoveJ(MoveJRequest) returns (CommandResponse);
   rpc Home(HomeRequest) returns (CommandResponse);
   // Run the robot's home-all plan: the axes of one group home at the same
   // time, groups in order. Added in 0.1.4.
@@ -358,6 +362,19 @@ message MoveToRequest {
   string axis = 1;
   double position = 2;
   optional double velocity = 3;
+}
+
+message MoveJRequest {
+  // At least one target; each axis at most once.
+  repeated JointTarget targets = 1;
+  // Fraction of every axis' maximum velocity, 0 < scale <= 1; default 1.
+  optional double speed_scale = 2;
+}
+
+message JointTarget {
+  string axis = 1;
+  // Absolute position, axis units.
+  double position = 2;
 }
 
 message HomeRequest {
