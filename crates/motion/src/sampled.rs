@@ -219,8 +219,8 @@ mod tests {
         let fast = time_scale(&p, &[L, L], 1.0, 100.0, 1000.0).unwrap();
         // Joint 0 needs 100 deg at <= 60 deg/s.
         assert!(fast.duration() > 100.0 / 60.0);
-        for k in 0..fast.q.len() {
-            assert!(fast.v[k].iter().all(|v| v.abs() <= 60.0 * 1.02));
+        for v in &fast.v {
+            assert!(v.iter().all(|v| v.abs() <= 60.0 * 1.02));
         }
         assert_eq!(fast.q.last().unwrap(), p.last().unwrap());
         assert!(fast.v.last().unwrap().iter().all(|v| *v == 0.0));
