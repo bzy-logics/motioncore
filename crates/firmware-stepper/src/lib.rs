@@ -130,10 +130,7 @@ impl<const Q: usize> StepperAxis<Q> {
     // ------------------------------------------------------------------
 
     pub fn configure(&mut self, cfg: AxisConfig) -> Result<(), NackReason> {
-        if cfg.min_steps >= cfg.max_steps
-            || !(cfg.max_rate.is_finite() && cfg.max_rate > 0.0)
-            || !(cfg.stop_decel.is_finite() && cfg.stop_decel > 0.0)
-        {
+        if cfg.min_steps >= cfg.max_steps || !(cfg.max_rate.is_finite() && cfg.max_rate > 0.0) || !(cfg.stop_decel.is_finite() && cfg.stop_decel > 0.0) {
             return Err(NackReason::InvalidParams);
         }
         if self.busy() {
@@ -189,12 +186,7 @@ impl<const Q: usize> StepperAxis<Q> {
         }
         let v1 = seg.end_velocity();
         let limit = cfg.max_rate * 1.01 + 1.0;
-        if seg.duration_us == 0
-            || !seg.v0.is_finite()
-            || !seg.accel.is_finite()
-            || seg.v0.abs() > limit
-            || v1.abs() > limit
-        {
+        if seg.duration_us == 0 || !seg.v0.is_finite() || !seg.accel.is_finite() || seg.v0.abs() > limit || v1.abs() > limit {
             return Err(NackReason::InvalidParams);
         }
         // The integer step count must agree with the kinematics.
@@ -229,9 +221,7 @@ impl<const Q: usize> StepperAxis<Q> {
         if self.busy() {
             return Err(NackReason::Busy);
         }
-        if !(params.speed.is_finite() && params.speed > 0.0 && params.speed <= cfg.max_rate)
-            || params.max_travel_steps == 0
-        {
+        if !(params.speed.is_finite() && params.speed > 0.0 && params.speed <= cfg.max_rate) || params.max_travel_steps == 0 {
             return Err(NackReason::InvalidParams);
         }
         self.homing = Some(Homing { params, acc: 0.0, travelled: 0, last_us: now_us });
@@ -335,7 +325,11 @@ impl<const Q: usize> StepperAxis<Q> {
             } else {
                 let t = elapsed as f32 * 1e-6;
                 let p = round_half_away(seg.v0 * t + 0.5 * seg.accel * t * t) as i32;
-                if seg.steps >= 0 { p.clamp(0, seg.steps) } else { p.clamp(seg.steps, 0) }
+                if seg.steps >= 0 {
+                    p.clamp(0, seg.steps)
+                } else {
+                    p.clamp(seg.steps, 0)
+                }
             };
             let mut emitted_now = emitted;
             while emitted_now != target {

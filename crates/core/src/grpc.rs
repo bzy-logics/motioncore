@@ -107,8 +107,7 @@ impl EngineService for EngineSvc {
     }
     async fn move_j_path(&self, r: Request<pb::MoveJPathRequest>) -> Res<pb::CommandResponse> {
         let r = r.into_inner();
-        let waypoints: Vec<Vec<(String, f64)>> =
-            r.waypoints.into_iter().map(|w| w.targets.into_iter().map(|t| (t.axis, t.position)).collect()).collect();
+        let waypoints: Vec<Vec<(String, f64)>> = r.waypoints.into_iter().map(|w| w.targets.into_iter().map(|t| (t.axis, t.position)).collect()).collect();
         done(self.engine.move_j_path(&waypoints, r.speed_scale).await)
     }
     async fn move_l(&self, r: Request<pb::MoveLRequest>) -> Res<pb::CommandResponse> {

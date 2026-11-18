@@ -232,7 +232,10 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Info => {
             let i = client::connect(&addr).await?.engine.get_info(pb::GetInfoRequest {}).await?.into_inner();
-            println!("engine {}  api {}  mcu protocol {}  plugin api {}  fault injection {}", i.engine_version, i.api_version, i.mcu_protocol_version, i.plugin_api_version, i.fault_injection_enabled);
+            println!(
+                "engine {}  api {}  mcu protocol {}  plugin api {}  fault injection {}",
+                i.engine_version, i.api_version, i.mcu_protocol_version, i.plugin_api_version, i.fault_injection_enabled
+            );
             Ok(())
         }
         Cmd::Status => {
@@ -249,7 +252,14 @@ async fn run(cli: Cli) -> Result<()> {
             let p = client::connect(&addr).await?.engine.list_plugins(pb::ListPluginsRequest {}).await?.into_inner();
             for p in p.plugins {
                 let state = pb::PluginState::try_from(p.state).map(|s| s.as_str_name()).unwrap_or("?");
-                println!("{:<45} {:<8} {:<8} {}{}", p.id, p.version, p.kind, state.trim_start_matches("PLUGIN_STATE_").to_lowercase(), if p.error.is_empty() { String::new() } else { format!("  ({})", p.error) });
+                println!(
+                    "{:<45} {:<8} {:<8} {}{}",
+                    p.id,
+                    p.version,
+                    p.kind,
+                    state.trim_start_matches("PLUGIN_STATE_").to_lowercase(),
+                    if p.error.is_empty() { String::new() } else { format!("  ({})", p.error) }
+                );
             }
             Ok(())
         }
@@ -260,7 +270,9 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Estop => client::command(&addr, |mut c| async move { c.engine.emergency_stop(pb::EmergencyStopRequest {}).await }).await,
         Cmd::ResetFault => client::command(&addr, |mut c| async move { c.engine.reset_fault(pb::ResetFaultRequest {}).await }).await,
         Cmd::Jog { axis, delta, velocity } => client::command(&addr, |mut c| async move { c.engine.jog(pb::JogRequest { axis, delta, velocity }).await }).await,
-        Cmd::Move { axis, position, velocity } => client::command(&addr, |mut c| async move { c.engine.move_to(pb::MoveToRequest { axis, position, velocity }).await }).await,
+        Cmd::Move { axis, position, velocity } => {
+            client::command(&addr, |mut c| async move { c.engine.move_to(pb::MoveToRequest { axis, position, velocity }).await }).await
+        }
         Cmd::Home { axis } => client::command(&addr, |mut c| async move { c.engine.home(pb::HomeRequest { axis }).await }).await,
         Cmd::Movej { targets, speed } => {
             let targets = targets.into_iter().map(|(axis, position)| pb::JointTarget { axis, position }).collect();
@@ -320,9 +332,7 @@ async fn run(cli: Cli) -> Result<()> {
 }
 
 async fn start(config: &Path, listen: &str, plugin_dir: Option<&Path>, repo: Option<PathBuf>, fault_injection: bool) -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .init();
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into())).init();
     let robot = motioncore_device_graph::load(config).with_context(|| format!("loading {}", config.display()))?;
     tracing::info!("robot '{}' loaded from {}", robot.file.robot.name, config.display());
 
@@ -447,7 +457,14 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
         FirmwareCmd::Verify { artifact, board, device } => {
             let artifact = artifact_dir(artifact, board)?;
             let r = builder::verify(&artifact, &device).await?;
-            println!("MCU reports: target {} board {} fw {} build {} caps [{}]", r.target, r.board, r.firmware_version, r.build_hash, r.capabilities.join(", "));
+            println!(
+                "MCU reports: target {} board {} fw {} build {} caps [{}]",
+                r.target,
+                r.board,
+                r.firmware_version,
+                r.build_hash,
+                r.capabilities.join(", ")
+            );
             if r.problems.is_empty() {
                 println!("verified: running firmware matches {}", artifact.display());
                 Ok(())

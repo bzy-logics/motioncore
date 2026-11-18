@@ -52,15 +52,7 @@ impl Sampled {
                 // exactly on the integer step count.
                 let smooth = (v1 - v0) / t;
                 let accel = if (v0 * t + 0.5 * smooth * t * t - ds as f64).abs() <= 1.0 { smooth } else { 2.0 * (ds as f64 - v0 * t) / (t * t) };
-                Segment {
-                    axis,
-                    start_us: start_us + self.t_us[k],
-                    duration_us: dur,
-                    steps: ds as i32,
-                    v0: v0 as f32,
-                    accel: accel as f32,
-                    last: k + 1 == n,
-                }
+                Segment { axis, start_us: start_us + self.t_us[k], duration_us: dur, steps: ds as i32, v0: v0 as f32, accel: accel as f32, last: k + 1 == n }
             })
             .collect()
     }
@@ -210,10 +202,12 @@ mod tests {
 
     /// A curved joint path: joint 0 linear, joint 1 a half sine.
     fn curve(n: usize) -> Vec<Vec<f64>> {
-        (0..=n).map(|i| {
-            let s = i as f64 / n as f64;
-            vec![100.0 * s, 40.0 * (std::f64::consts::PI * s).sin()]
-        }).collect()
+        (0..=n)
+            .map(|i| {
+                let s = i as f64 / n as f64;
+                vec![100.0 * s, 40.0 * (std::f64::consts::PI * s).sin()]
+            })
+            .collect()
     }
 
     #[test]

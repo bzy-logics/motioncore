@@ -89,7 +89,11 @@ impl Trapezoid {
     }
 
     fn sign(&self) -> f64 {
-        if self.distance < 0.0 { -1.0 } else { 1.0 }
+        if self.distance < 0.0 {
+            -1.0
+        } else {
+            1.0
+        }
     }
 
     /// Position at time `t` (clamped to the profile).
@@ -144,7 +148,11 @@ impl Trapezoid {
 }
 
 fn finite(name: &'static str, v: f64) -> Result<f64, MotionError> {
-    if v.is_finite() { Ok(v) } else { Err(MotionError::NonFinite(name)) }
+    if v.is_finite() {
+        Ok(v)
+    } else {
+        Err(MotionError::NonFinite(name))
+    }
 }
 
 /// Time-optimal trapezoid from `start` to `target`, respecting `v_max`/`a_max`.
@@ -171,12 +179,7 @@ pub fn plan_trapezoid(start: f64, target: f64, v_max: f64, a_max: f64) -> Result
 /// Validate and plan a single-axis point-to-point move.
 ///
 /// `velocity` is an optional requested cruise speed (must be ≤ limit).
-pub fn plan_axis_move(
-    start: f64,
-    target: f64,
-    velocity: Option<f64>,
-    limits: &AxisLimits,
-) -> Result<Trapezoid, MotionError> {
+pub fn plan_axis_move(start: f64, target: f64, velocity: Option<f64>, limits: &AxisLimits) -> Result<Trapezoid, MotionError> {
     finite("target", target)?;
     if target < limits.min || target > limits.max {
         return Err(MotionError::OutOfLimits { target, min: limits.min, max: limits.max });
@@ -234,11 +237,7 @@ pub fn validate(p: &Trapezoid, limits: &AxisLimits) -> Result<(), MotionError> {
 /// The three slices must have the same length, otherwise
 /// [`MotionError::InvalidAxisCount`] is returned. A zero-axis move is valid
 /// and plans to an empty trajectory.
-pub fn plan_synchronized(
-    starts: &[f64],
-    targets: &[f64],
-    limits: &[AxisLimits],
-) -> Result<Vec<Trapezoid>, MotionError> {
+pub fn plan_synchronized(starts: &[f64], targets: &[f64], limits: &[AxisLimits]) -> Result<Vec<Trapezoid>, MotionError> {
     plan_synchronized_scaled(starts, targets, limits, 1.0)
 }
 
@@ -249,12 +248,7 @@ pub fn plan_synchronized(
 /// `start + distance · s(t)` with the same normalised `s(t)`: the path is a
 /// straight line in joint space, and all axes start, cruise, decelerate and
 /// stop together.
-pub fn plan_synchronized_scaled(
-    starts: &[f64],
-    targets: &[f64],
-    limits: &[AxisLimits],
-    speed_scale: f64,
-) -> Result<Vec<Trapezoid>, MotionError> {
+pub fn plan_synchronized_scaled(starts: &[f64], targets: &[f64], limits: &[AxisLimits], speed_scale: f64) -> Result<Vec<Trapezoid>, MotionError> {
     if starts.len() != targets.len() || targets.len() != limits.len() {
         return Err(MotionError::InvalidAxisCount { starts: starts.len(), targets: targets.len(), limits: limits.len() });
     }
@@ -266,17 +260,8 @@ pub fn plan_synchronized_scaled(
         return Ok(Vec::new());
     }
     let scaled: Vec<AxisLimits> = limits.iter().map(|l| AxisLimits { max_velocity: l.max_velocity * speed_scale, ..*l }).collect();
-    let individual: Vec<Trapezoid> = starts
-        .iter()
-        .zip(targets)
-        .zip(&scaled)
-        .map(|((&s, &t), l)| plan_axis_move(s, t, None, l))
-        .collect::<Result<_, _>>()?;
-    let lead = individual
-        .iter()
-        .copied()
-        .max_by(|a, b| a.duration().total_cmp(&b.duration()))
-        .expect("at least one axis");
+    let individual: Vec<Trapezoid> = starts.iter().zip(targets).zip(&scaled).map(|((&s, &t), l)| plan_axis_move(s, t, None, l)).collect::<Result<_, _>>()?;
+    let lead = individual.iter().copied().max_by(|a, b| a.duration().total_cmp(&b.duration())).expect("at least one axis");
     let (mut ta, mut tc) = (lead.t_accel, lead.t_cruise);
     if ta + tc == 0.0 {
         // Nothing moves.
@@ -329,13 +314,7 @@ pub fn plan_synchronized_scaled(
 ///   quadratic and the MCU's `v0·t + ½·a·t²` model is exact.
 /// * Step counts are differences of rounded **absolute** step positions, so
 ///   rounding error never accumulates across segments.
-pub fn to_segments(
-    p: &impl Profile,
-    axis: u8,
-    steps_per_unit: f64,
-    start_us: u64,
-    max_segment_us: u32,
-) -> Vec<Segment> {
+pub fn to_segments(p: &impl Profile, axis: u8, steps_per_unit: f64, start_us: u64, max_segment_us: u32) -> Vec<Segment> {
     let to_steps = |x: f64| (x * steps_per_unit).round() as i64;
     let mut times_us: Vec<u64> = Vec::new();
     let phases = p.breakpoints();
@@ -490,9 +469,7 @@ mod sync_tests {
             }
         }
         // Some axis is exactly at a limit: the timing is not padded.
-        let tight = ps.iter().zip(six()).any(|(p, l)| {
-            (p.v_peak / l.max_velocity - 1.0).abs() < 1e-6 || (p.accel / l.max_acceleration - 1.0).abs() < 1e-6
-        });
+        let tight = ps.iter().zip(six()).any(|(p, l)| (p.v_peak / l.max_velocity - 1.0).abs() < 1e-6 || (p.accel / l.max_acceleration - 1.0).abs() < 1e-6);
         assert!(tight, "the stretch must be minimal");
     }
 

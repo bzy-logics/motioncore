@@ -130,12 +130,7 @@ impl<const AXES: usize, const Q: usize> McuCore<AXES, Q> {
 
     pub fn status(&self, now_us: u64, hal: &mut impl Hal) -> Status {
         let depth = self.axes.iter().map(|a| a.queue_depth()).max().unwrap_or(0);
-        Status {
-            mcu_time_us: now_us,
-            fault: self.fault,
-            queue_depth: depth as u8,
-            axes: self.axes.iter().map(|a| a.status(hal)).collect(),
-        }
+        Status { mcu_time_us: now_us, fault: self.fault, queue_depth: depth as u8, axes: self.axes.iter().map(|a| a.status(hal)).collect() }
     }
 
     /// Queue a status report (call at the telemetry rate).

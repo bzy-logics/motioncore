@@ -158,13 +158,27 @@ pub struct McuFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum McuMsg {
     Identity(Identity),
-    ClockSyncReply { host_time_us: u64, mcu_time_us: u64 },
-    Ack { seq: u32 },
-    Nack { seq: u32, reason: NackReason },
+    ClockSyncReply {
+        host_time_us: u64,
+        mcu_time_us: u64,
+    },
+    Ack {
+        seq: u32,
+    },
+    Nack {
+        seq: u32,
+        reason: NackReason,
+    },
     Status(Status),
     /// Sent once when a fault latches.
-    Fault { code: FaultCode, axis: Option<u8> },
-    HomingDone { axis: u8, position_steps: i32 },
+    Fault {
+        code: FaultCode,
+        axis: Option<u8>,
+    },
+    HomingDone {
+        axis: u8,
+        position_steps: i32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -224,8 +238,5 @@ pub struct AxisStatus {
 
 /// Convert a capability bitmask to names (host-side helper).
 pub fn capability_names(mask: u32) -> impl Iterator<Item = &'static str> {
-    caps::NAMES
-        .iter()
-        .filter(move |(bit, _)| mask & bit != 0)
-        .map(|(_, name)| *name)
+    caps::NAMES.iter().filter(move |(bit, _)| mask & bit != 0).map(|(_, name)| *name)
 }

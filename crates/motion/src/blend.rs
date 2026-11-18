@@ -274,10 +274,7 @@ mod tests {
         let tz = t.t0 + (0.0..t.duration).step_by_f(1e-4).find(|&dt| t.at(t.t0 + dt).0 >= 60.0).unwrap();
         assert!(ps[0].velocity(tz) > 20.0, "{}", ps[0].velocity(tz));
         // Faster than three separate stop-and-go moves.
-        let stops: f64 = w
-            .windows(2)
-            .map(|p| crate::plan_synchronized(&p[0], &p[1], &lim).unwrap()[0].duration())
-            .sum();
+        let stops: f64 = w.windows(2).map(|p| crate::plan_synchronized(&p[0], &p[1], &lim).unwrap()[0].duration()).sum();
         assert!(ps[0].duration() < 0.85 * stops, "{} vs {stops}", ps[0].duration());
     }
 

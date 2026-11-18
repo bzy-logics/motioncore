@@ -10,17 +10,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use motioncore_device_graph::{AxisSection, Direction, JointKind, ResolvedMcu, ResolvedRobot, Transport, Unit};
+use motioncore_engine_api::v1 as pb;
 use motioncore_kinematics::chain::{pose_from, Chain, ToolPose};
 use motioncore_kinematics::collision::{CollisionModel, JointSpec};
 use motioncore_mcu_manager::{McuError, McuEvent, McuLink};
 use motioncore_motion::blend::plan_blended;
 use motioncore_motion::sampled::time_scale;
 use motioncore_motion::{plan_axis_move, plan_synchronized_scaled, to_segments, AxisLimits, MotionError, Profile};
-use motioncore_engine_api::v1 as pb;
 use motioncore_plugin_runtime::{PluginKind, PluginState, Registry};
-use motioncore_protocol::{
-    capability_names, AxisConfig, FaultCode as McuFault, HomeParams, HostMsg, Identity, NackReason, Segment, Status,
-};
+use motioncore_protocol::{capability_names, AxisConfig, FaultCode as McuFault, HomeParams, HostMsg, Identity, NackReason, Segment, Status};
 use motioncore_safety::{Event, Fault, FaultCode, RobotState, Supervisor};
 use tokio::sync::{broadcast, mpsc};
 
@@ -187,12 +185,7 @@ impl Engine {
             }
         }
         let mcu = robot.mcus.values().next().unwrap().clone();
-        let axes = robot
-            .file
-            .axes
-            .iter()
-            .map(|a| AxisRt { cfg: a.clone(), homed: false, enabled: false, commanded: 0.0 })
-            .collect();
+        let axes = robot.file.axes.iter().map(|a| AxisRt { cfg: a.clone(), homed: false, enabled: false, commanded: 0.0 }).collect();
         let collision = collision_model(&robot);
         let chain = serial_chain(&robot);
         Ok(Arc::new(Self {
@@ -496,12 +489,7 @@ impl Engine {
     }
 
     fn axis_index(&self, id: &str) -> Result<usize, ApiError> {
-        self.robot
-            .file
-            .axes
-            .iter()
-            .position(|a| a.id == id)
-            .ok_or_else(|| ApiError::new("unknown_axis", format!("unknown axis '{id}'")))
+        self.robot.file.axes.iter().position(|a| a.id == id).ok_or_else(|| ApiError::new("unknown_axis", format!("unknown axis '{id}'")))
     }
 
     fn link(&self) -> Result<McuLink, ApiError> {
@@ -687,12 +675,7 @@ impl Engine {
             mcus: f
                 .mcu
                 .iter()
-                .map(|(name, m)| pb::McuConfig {
-                    name: name.clone(),
-                    board: m.board.clone(),
-                    transport: m.transport.clone(),
-                    watchdog_ms: m.watchdog_ms,
-                })
+                .map(|(name, m)| pb::McuConfig { name: name.clone(), board: m.board.clone(), transport: m.transport.clone(), watchdog_ms: m.watchdog_ms })
                 .collect(),
             axes: f
                 .axes
@@ -970,12 +953,8 @@ impl Engine {
                 let from: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
                 let to: Vec<f64> = order.iter().map(|&k| target_of(k)).collect();
                 if let Err(c) = model.check_path(&from, &to) {
-                    let at: Vec<String> = order
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, k)| idx.contains(k))
-                        .map(|(m, &k)| format!("{} {:.1}", g.axes[k].cfg.id, c.at[m]))
-                        .collect();
+                    let at: Vec<String> =
+                        order.iter().enumerate().filter(|(_, k)| idx.contains(k)).map(|(m, &k)| format!("{} {:.1}", g.axes[k].cfg.id, c.at[m])).collect();
                     return Err(ApiError::new("collision", format!("refused: {c} at {}", at.join(", "))));
                 }
             }
@@ -1185,8 +1164,10 @@ impl Engine {
             }
         }
         let s_speed = [(dist > 1e-9).then(|| speed / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
-        let s_accel =
-            [(dist > 1e-9).then(|| LINE_ACCEL_MM_S2 / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S2 / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
+        let s_accel = [(dist > 1e-9).then(|| LINE_ACCEL_MM_S2 / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S2 / turn)]
+            .into_iter()
+            .flatten()
+            .fold(f64::INFINITY, f64::min);
         let traj = time_scale(&path, &limits, scale, s_speed, s_accel).map_err(motion_err)?;
 
         let mut g = self.inner.lock().unwrap();
@@ -1209,13 +1190,7 @@ impl Engine {
         drop(g);
         self.log(
             "debug",
-            format!(
-                "move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s",
-                position[0],
-                position[1],
-                position[2],
-                traj.duration()
-            ),
+            format!("move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s", position[0], position[1], position[2], traj.duration()),
         );
         Ok(())
     }
@@ -1235,10 +1210,7 @@ impl Engine {
         if plan.is_empty() {
             return Err(ApiError::bad_request("no axis has a homing configuration"));
         }
-        let desc: Vec<String> = plan
-            .iter()
-            .map(|g| g.iter().map(|&i| self.robot.file.axes[i].id.as_str()).collect::<Vec<_>>().join("+"))
-            .collect();
+        let desc: Vec<String> = plan.iter().map(|g| g.iter().map(|&i| self.robot.file.axes[i].id.as_str()).collect::<Vec<_>>().join("+")).collect();
         self.log("info", format!("home all: {}", desc.join(" -> ")));
         self.start_homing(plan).await
     }

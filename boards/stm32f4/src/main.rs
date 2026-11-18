@@ -36,11 +36,8 @@ mod board;
 use board::{BoardHal, AXES};
 
 const SYSCLK_MHZ: u32 = 96;
-const FIRMWARE_VERSION: (u8, u8, u8) = (
-    parse_u8(env!("CARGO_PKG_VERSION_MAJOR")),
-    parse_u8(env!("CARGO_PKG_VERSION_MINOR")),
-    parse_u8(env!("CARGO_PKG_VERSION_PATCH")),
-);
+const FIRMWARE_VERSION: (u8, u8, u8) =
+    (parse_u8(env!("CARGO_PKG_VERSION_MAJOR")), parse_u8(env!("CARGO_PKG_VERSION_MINOR")), parse_u8(env!("CARGO_PKG_VERSION_PATCH")));
 
 const fn parse_u8(s: &str) -> u8 {
     let b = s.as_bytes();
@@ -113,12 +110,7 @@ fn main() -> ! {
 
     // Black Pill: 25 MHz HSE -> 96 MHz SYSCLK, 48 MHz for USB.
     let rcc = dp.RCC.constrain();
-    let clocks = rcc
-        .cfgr
-        .use_hse(25.MHz())
-        .sysclk(SYSCLK_MHZ.MHz())
-        .require_pll48clk()
-        .freeze();
+    let clocks = rcc.cfgr.use_hse(25.MHz()).sysclk(SYSCLK_MHZ.MHz()).require_pll48clk().freeze();
 
     cp.DCB.enable_trace();
     cp.DWT.enable_cycle_counter();
@@ -133,20 +125,12 @@ fn main() -> ! {
     iwdg.start(100.millis());
 
     // USB CDC-ACM.
-    let usb = USB::new(
-        (dp.OTG_FS_GLOBAL, dp.OTG_FS_DEVICE, dp.OTG_FS_PWRCLK),
-        (gpioa.pa11, gpioa.pa12),
-        &clocks,
-    );
+    let usb = USB::new((dp.OTG_FS_GLOBAL, dp.OTG_FS_DEVICE, dp.OTG_FS_PWRCLK), (gpioa.pa11, gpioa.pa12), &clocks);
     let ep_memory = cortex_m::singleton!(: [u32; 1024] = [0; 1024]).unwrap();
-    let usb_bus: &'static UsbBusAllocator<UsbBus<USB>> =
-        cortex_m::singleton!(: UsbBusAllocator<UsbBus<USB>> = UsbBus::new(usb, ep_memory)).unwrap();
+    let usb_bus: &'static UsbBusAllocator<UsbBus<USB>> = cortex_m::singleton!(: UsbBusAllocator<UsbBus<USB>> = UsbBus::new(usb, ep_memory)).unwrap();
     let mut serial = SerialPort::new(usb_bus);
     let mut usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .strings(&[StringDescriptors::default()
-            .manufacturer("MotionCore")
-            .product("MotionCore MCU (stm32f411)")
-            .serial_number("MC-F411")])
+        .strings(&[StringDescriptors::default().manufacturer("MotionCore").product("MotionCore MCU (stm32f411)").serial_number("MC-F411")])
         .unwrap()
         .device_class(usbd_serial::USB_CLASS_CDC)
         .build();

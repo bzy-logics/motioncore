@@ -16,13 +16,7 @@ use serde::{Deserialize, Serialize};
 pub const API_VERSION: &str = "0";
 
 /// Permissions a plugin may request. Anything else is rejected.
-pub const KNOWN_PERMISSIONS: &[&str] = &[
-    "robot.read_geometry",
-    "robot.read_state",
-    "motion.propose",
-    "telemetry.read",
-    "config.read",
-];
+pub const KNOWN_PERMISSIONS: &[&str] = &["robot.read_geometry", "robot.read_state", "motion.propose", "telemetry.read", "config.read"];
 
 /// Capabilities provided by the engine core itself.
 pub const CORE_CAPABILITIES: &[&str] = &["robot.joint_model", "mcu.stepper", "telemetry.stream"];
@@ -91,10 +85,7 @@ impl Manifest {
 
 fn valid_id(id: &str) -> bool {
     let parts: Vec<&str> = id.split('.').collect();
-    parts.len() >= 3
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+    parts.len() >= 3 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
 }
 
 /// Read-only context handed to a plugin on activation.
