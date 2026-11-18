@@ -15,6 +15,10 @@
 //! the E-stop chain's monitoring contact; open = unsafe. GP25 (on-board LED)
 //! is lit while any drive is enabled.
 //!
+//! GP28 (feature `bench-panic` only): pull-up input; tying it to GND makes
+//! the firmware panic in the next motion tick, to measure the panic safe
+//! state on the bench. Never enable this feature in production firmware.
+//!
 //! RP2040 I/O is 3.3 V and **not** 5 V tolerant. Drivers need 3.3 V-compatible
 //! logic inputs (or level shifters), and every ENABLE line needs an external
 //! pull-up so a reset or unprogrammed MCU leaves the drivers disabled.
@@ -57,6 +61,8 @@ pub struct BoardHal {
     endstop: [In; AXES],
     interlock: In,
     led: Out,
+    #[cfg(feature = "bench-panic")]
+    panic_trigger: In,
     sms: [StepSm; AXES],
     runs: [StepRuns; AXES],
     enabled: [bool; AXES],
@@ -90,6 +96,8 @@ impl BoardHal {
             pins.gpio26.into_pull_up_input().into_dyn_pin(),
         ];
         let interlock = pins.gpio27.into_pull_up_input().into_dyn_pin();
+        #[cfg(feature = "bench-panic")]
+        let panic_trigger = pins.gpio28.into_pull_up_input().into_dyn_pin();
         let led = pins.gpio25.into_push_pull_output_in_state(PinState::Low).into_dyn_pin();
 
         pio_pins!(pins, FunctionPio0: gpio0, gpio1, gpio2, gpio3, gpio4, gpio5, gpio6, gpio7);
@@ -102,7 +110,17 @@ impl BoardHal {
             let (block, sm) = sm_for_axis(i as u8);
             StepSm::new(block, sm, &prog, STEP_PINS[i], DIR_PINS[i], PIO_CLKDIV)
         });
-        Self { enable, endstop, interlock, led, sms, runs: [StepRuns::new(); AXES], enabled: [false; AXES] }
+        Self {
+            enable,
+            endstop,
+            interlock,
+            led,
+            #[cfg(feature = "bench-panic")]
+            panic_trigger,
+            sms,
+            runs: [StepRuns::new(); AXES],
+            enabled: [false; AXES],
+        }
     }
 }
 
@@ -164,5 +182,56 @@ impl Hal for BoardHal {
             }
         }
         ok
+    }
+}
+
+#[cfg(feature = "bench-panic")]
+impl BoardHal {
+    /// `true` while the bench panic trigger (GP28) is tied to GND.
+    pub fn panic_requested(&mut self) -> bool {
+        self.panic_trigger.is_low().unwrap_or(false)
+    }
+}
+
+/// ENABLE outputs GP12–GP17 (active low: high = driver disabled).
+const ENABLE_MASK: u32 = 0x3f << 12;
+/// STEP and DIR outputs GP0–GP11 (driven by PIO during operation).
+const STEP_DIR_MASK: u32 = 0xfff;
+/// On-board LED (GP25), lit while a drive is enabled.
+const LED_MASK: u32 = 1 << 25;
+/// IO_BANK0 `GPIOx_CTRL.FUNCSEL` value for software-controlled I/O (SIO).
+const FUNCSEL_SIO: u32 = 5;
+
+/// Put every output into its safe state, from any context (panic handler,
+/// fault paths), without relying on the state of the code that failed:
+///
+/// 1. interrupts off, so the motion tick cannot run again;
+/// 2. every ENABLE line to its disabled level (drivers off) — first, because
+///    it is what matters;
+/// 3. both PIO blocks stopped, so no queued step window keeps running;
+/// 4. STEP and DIR handed from PIO back to SIO and driven low, so no pin is
+///    left high in the middle of a pulse;
+/// 5. LED off.
+///
+/// Uses direct register writes only. Infallible. The external E-stop chain
+/// remains the safety function; this only keeps a firmware fault from leaving
+/// drives energised until the watchdog resets the MCU (ADR 0002, #68).
+pub fn safe_shutdown() {
+    cortex_m::interrupt::disable();
+    // SAFETY: single-core shutdown path with interrupts disabled; plain
+    // register writes to SIO, PIO and IO_BANK0, which are valid in any state.
+    unsafe {
+        let sio = &*rp2040_hal::pac::SIO::ptr();
+        sio.gpio_out_set().write(|w| w.bits(ENABLE_MASK));
+        sio.gpio_oe_set().write(|w| w.bits(ENABLE_MASK));
+        for pio in [&*rp2040_hal::pac::PIO0::ptr(), &*rp2040_hal::pac::PIO1::ptr()] {
+            pio.ctrl().write(|w| w.bits(0));
+        }
+        sio.gpio_out_clr().write(|w| w.bits(STEP_DIR_MASK | LED_MASK));
+        sio.gpio_oe_set().write(|w| w.bits(STEP_DIR_MASK));
+        let io = &*rp2040_hal::pac::IO_BANK0::ptr();
+        for pin in 0..12 {
+            io.gpio(pin).gpio_ctrl().write(|w| w.bits(FUNCSEL_SIO));
+        }
     }
 }

@@ -20,7 +20,6 @@ use cortex_m_rt::entry;
 use critical_section::Mutex;
 use motioncore_firmware_core::{BoardInfo, McuCore, DEFAULT_LATE_TOLERANCE_US};
 use motioncore_protocol::{encode_frame, FrameDecoder, HostFrame, MAX_FRAME};
-use panic_halt as _;
 use stm32f4xx_hal::{
     otg_fs::{UsbBus, USB},
     pac::{self, interrupt, TIM3},
@@ -117,7 +116,14 @@ fn main() -> ! {
 
     let gpioa = dp.GPIOA.split();
     let gpiob = dp.GPIOB.split();
-    let hal = BoardHal::new(gpioa.pa0, gpioa.pa1, gpioa.pa2, gpiob.pb0);
+    let hal = BoardHal::new(
+        gpioa.pa0,
+        gpioa.pa1,
+        gpioa.pa2,
+        gpiob.pb0,
+        #[cfg(feature = "bench-panic")]
+        gpiob.pb1,
+    );
 
     // Hardware watchdog: if the main loop stalls, the MCU resets and the
     // external pull-up disables the drivers.
@@ -216,6 +222,20 @@ fn TIM3() {
             s.timer.clear_flags(Flag::Update);
             let now = s.clock.now_us();
             s.core.tick(now, &mut s.hal);
+            #[cfg(feature = "bench-panic")]
+            if s.hal.panic_requested() {
+                panic!("bench-panic trigger (PB1)");
+            }
         }
     });
+}
+
+/// Outputs go to their safe state immediately (driver disabled, STEP/DIR
+/// low); the independent watchdog then resets the MCU.
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    board::safe_shutdown();
+    loop {
+        cortex_m::asm::nop();
+    }
 }
