@@ -96,6 +96,34 @@ enum Cmd {
         #[arg(long)]
         speed: Option<f64>,
     },
+    /// Blended joint path through waypoints without stopping at the
+    /// intermediate ones, e.g. `movej-path "j1=30 j2=10" "j1=-30" "j1=0 j2=0"`.
+    MovejPath {
+        /// One argument per waypoint: space-separated AXIS=POSITION pairs.
+        #[arg(required = true)]
+        waypoints: Vec<String>,
+        /// Fraction of every axis' maximum velocity, 0 < SPEED <= 1.
+        #[arg(long)]
+        speed: Option<f64>,
+    },
+    /// Cartesian straight-line move of the tool point to X Y Z (mm).
+    Movel {
+        #[arg(allow_negative_numbers = true)]
+        x: f64,
+        #[arg(allow_negative_numbers = true)]
+        y: f64,
+        #[arg(allow_negative_numbers = true)]
+        z: f64,
+        /// Target orientation as ROLL,PITCH,YAW in degrees (default: keep).
+        #[arg(long, value_delimiter = ',', num_args = 3, allow_negative_numbers = true)]
+        rpy: Option<Vec<f64>>,
+        /// Tool speed along the line, mm/s (default 50).
+        #[arg(long)]
+        speed: Option<f64>,
+        /// Fraction of every axis' maximum velocity, 0 < SCALE <= 1.
+        #[arg(long)]
+        speed_scale: Option<f64>,
+    },
     Home {
         axis: String,
     },
@@ -237,6 +265,23 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Movej { targets, speed } => {
             let targets = targets.into_iter().map(|(axis, position)| pb::JointTarget { axis, position }).collect();
             client::command(&addr, |mut c| async move { c.engine.move_j(pb::MoveJRequest { targets, speed_scale: speed }).await }).await
+        }
+        Cmd::MovejPath { waypoints, speed } => {
+            let mut wps = Vec::with_capacity(waypoints.len());
+            for w in &waypoints {
+                let targets: Vec<pb::JointTarget> = w
+                    .split_whitespace()
+                    .map(|t| parse_joint_target(t).map(|(axis, position)| pb::JointTarget { axis, position }))
+                    .collect::<Result<_, _>>()
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                wps.push(pb::JointWaypoint { targets });
+            }
+            client::command(&addr, |mut c| async move { c.engine.move_j_path(pb::MoveJPathRequest { waypoints: wps, speed_scale: speed }).await }).await
+        }
+        Cmd::Movel { x, y, z, rpy, speed, speed_scale } => {
+            let rotation_deg = rpy.map(|r| pb::Vec3 { x: r[0], y: r[1], z: r[2] });
+            let req = pb::MoveLRequest { position_mm: Some(pb::Vec3 { x, y, z }), rotation_deg, speed_mm_s: speed, speed_scale };
+            client::command(&addr, |mut c| async move { c.engine.move_l(req).await }).await
         }
         Cmd::HomeAll => client::command(&addr, |mut c| async move { c.engine.home_all(pb::HomeAllRequest {}).await }).await,
         Cmd::Mcu { cmd: McuCmd::List } => {

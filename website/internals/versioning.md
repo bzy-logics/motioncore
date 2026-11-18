@@ -18,7 +18,7 @@ The `.proto` in `crates/engine-api` is the single source of truth. There are no 
 MotionCore is pre-1.0, and so is its engine API: `API_VERSION` is `0.MINOR.PATCH`.
 
 - **PATCH** for additive, compatible changes: new fields, messages, RPCs, enum values. Older clients keep working; new features are detected by the presence of fields, not by comparing versions.
-- **MINOR** for breaking changes and major features (coordinated MoveJ is `0.2.0`). Clients accept an engine with the same `0.MINOR` only, so ratavyr is re-released with each minor.
+- **MINOR** for breaking changes and major features (coordinated MoveJ was `0.2.0`, MoveL and blended paths `0.3.0`). Clients accept an engine with the same `0.MINOR` only, so ratavyr is re-released with each minor.
 - Field numbers are never reused; removed fields are `reserved`.
 - The proto package stays `motioncore.engine.v1`: the `v1` is the package generation, not the version.
 - Releases are git tags `engine-api/v0.MINOR.PATCH`.
@@ -34,6 +34,7 @@ The engine-api version is independent of MotionCore's milestones: engine-api `0.
 | 0.1.3 | `AxisConfig.geometry` | 1.1.0 |
 | 0.1.4 | `HomeAll`, collision checking, axis `homing` | 1.2.0 |
 | 0.2.0 | `MoveJ`: coordinated joint moves | — |
+| 0.3.0 | `MoveL` (Cartesian lines), `MoveJPath` (blended paths), tool pose in telemetry | — |
 
 The API was first numbered `1.x`; it was renumbered to `0.x` because the project is pre-1.0. The old `engine-api/v1.*` tags were removed, and earlier commits still report the old numbers.
 

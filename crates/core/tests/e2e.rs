@@ -524,3 +524,166 @@ async fn move_j_moves_six_axes_together_on_a_straight_joint_path() {
     let want = [-100.0, 20.0, 160.0, 130.0, 80.0, -10.0];
     assert!(q.iter().zip(want).all(|(x, y)| (x - y).abs() < 0.01), "{q:?}");
 }
+
+async fn homed_arm() -> Client {
+    let mut c = start_with("dummy-arm-virtual.toml", false).await;
+    c.engine.enable(pb::EnableRequest {}).await.unwrap();
+    c.wait_state("ready", T).await;
+    c.engine.home_all(pb::HomeAllRequest {}).await.unwrap();
+    c.wait_for("homed", Duration::from_secs(60), |s| s["state"] == "ready" && s["axes"].as_array().unwrap().iter().all(|a| a["homed"] == true))
+        .await;
+    c
+}
+
+fn waypoint(q: &[f64]) -> pb::JointWaypoint {
+    pb::JointWaypoint { targets: targets(q) }
+}
+
+fn code(e: &tonic::Status) -> String {
+    e.metadata().get("motioncore-error-code").unwrap().to_str().unwrap().to_string()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_j_path_blends_through_waypoints_without_stopping() {
+    let mut c = homed_arm().await;
+    // Corners, not reversals: at a corner that doubles back on itself the
+    // blend passes through zero velocity, as it must.
+    let wps = [[0.0, 0.0, 90.0, 0.0, 0.0, 0.0], [60.0, 30.0, 120.0, 90.0, -60.0, 180.0], [0.0, 45.0, 60.0, 0.0, -75.0, 0.0], [-60.0, 20.0, 100.0, -90.0, 60.0, -180.0]];
+
+    // Rejected before anything moves.
+    let mut bad = wps.to_vec();
+    bad[1][1] = 95.0;
+    let e = c.engine.move_j_path(pb::MoveJPathRequest { waypoints: bad.iter().map(|w| waypoint(w)).collect(), speed_scale: None }).await.unwrap_err();
+    assert_eq!(code(&e), "validation_failed");
+    assert!(e.message().contains("waypoint 2") && e.message().contains("j2"), "{}", e.message());
+    let e = c.engine.move_j_path(pb::MoveJPathRequest { waypoints: vec![], speed_scale: None }).await.unwrap_err();
+    assert_eq!(code(&e), "bad_request");
+
+    c.engine.move_j_path(pb::MoveJPathRequest { waypoints: wps.iter().map(|w| waypoint(w)).collect(), speed_scale: None }).await.unwrap();
+    // Sample MCU velocities: some joint is always moving between start and end.
+    let mut speeds: Vec<f64> = Vec::new();
+    let mut started = false;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let t = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+        assert!(t.fault.is_none(), "fault: {:?}", t.fault);
+        let fastest = t.axes.iter().map(|a| a.velocity.abs()).fold(0.0, f64::max);
+        if fastest > 1.0 {
+            started = true;
+        }
+        if started {
+            speeds.push(fastest);
+        }
+        if started && t.state == pb::RobotState::Ready as i32 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "path did not finish");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let n = speeds.len();
+    assert!(n > 100, "{n} samples");
+    let inner = &speeds[n / 20..n - n / 20];
+    let slowest = inner.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!(slowest > 10.0, "the arm stopped mid-path (slowest {slowest:.1} deg/s)");
+    let end = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    for (a, want) in end.axes.iter().zip(wps[3]) {
+        assert!((a.measured_position - want).abs() < 0.01, "{} at {}", a.id, a.measured_position);
+    }
+
+    // A path whose waypoints are clear but whose straight leg swings the
+    // flange through the base column is refused.
+    let a = [-120.0, 20.0, 180.0, 130.0, 80.0, -10.0];
+    let b = [150.0, -35.0, 150.0, -145.0, 60.0, 465.0];
+    let e = c.engine.move_j_path(pb::MoveJPathRequest { waypoints: vec![waypoint(&a), waypoint(&b)], speed_scale: Some(0.5) }).await.unwrap_err();
+    assert_eq!(code(&e), "collision", "{}", e.message());
+    assert!(e.message().contains("% of the path"), "{}", e.message());
+}
+
+/// Angle (deg) between the rotations given as roll/pitch/yaw.
+fn turn_between(a: [f64; 3], b: [f64; 3]) -> f64 {
+    let m = |r: [f64; 3]| {
+        let (sr, cr) = r[0].to_radians().sin_cos();
+        let (sp, cp) = r[1].to_radians().sin_cos();
+        let (sy, cy) = r[2].to_radians().sin_cos();
+        [[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr], [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr], [-sp, cp * sr, cp * cr]]
+    };
+    let (ra, rb) = (m(a), m(b));
+    let tr: f64 = (0..3).map(|i| (0..3).map(|k| ra[k][i] * rb[k][i]).sum::<f64>()).sum();
+    ((tr - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
+}
+
+fn v3(v: &Option<pb::Vec3>) -> [f64; 3] {
+    let v = v.as_ref().unwrap();
+    [v.x, v.y, v.z]
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_l_keeps_the_tool_on_a_straight_line() {
+    let mut c = homed_arm().await;
+    let start_q = [0.0, 20.0, 110.0, 0.0, -40.0, 0.0];
+    c.engine.move_j(pb::MoveJRequest { targets: targets(&start_q), speed_scale: None }).await.unwrap();
+    c.wait_state("running", T).await;
+    c.wait_state("ready", Duration::from_secs(30)).await;
+    let t0 = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    let tool = t0.tool.expect("serial chain: tool pose in telemetry");
+    let (p0, r0) = (v3(&tool.position_mm), v3(&tool.rotation_deg));
+    let p1 = [p0[0], p0[1] + 120.0, p0[2] - 40.0];
+
+    // Out of reach: refused before anything moves.
+    let far = pb::Vec3 { x: 2000.0, y: 0.0, z: 300.0 };
+    let e = c.engine.move_l(pb::MoveLRequest { position_mm: Some(far), ..Default::default() }).await.unwrap_err();
+    assert_eq!(code(&e), "validation_failed", "{}", e.message());
+
+    c.engine
+        .move_l(pb::MoveLRequest { position_mm: Some(pb::Vec3 { x: p1[0], y: p1[1], z: p1[2] }), speed_mm_s: Some(60.0), ..Default::default() })
+        .await
+        .unwrap();
+    let len = ((p1[1] - p0[1]).powi(2) + (p1[2] - p0[2]).powi(2)).sqrt();
+    let dir = [0.0, (p1[1] - p0[1]) / len, (p1[2] - p0[2]) / len];
+    let mut worst_off = 0.0f64;
+    let mut worst_turn = 0.0f64;
+    let mut progress = -1.0f64;
+    let mut moving = 0;
+    let started = Instant::now();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let t = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+        assert!(t.fault.is_none(), "fault: {:?}", t.fault);
+        let tool = t.tool.unwrap();
+        let (p, r) = (v3(&tool.position_mm), v3(&tool.rotation_deg));
+        let d = [p[0] - p0[0], p[1] - p0[1], p[2] - p0[2]];
+        let along = d[1] * dir[1] + d[2] * dir[2];
+        let off = ((d[0]).powi(2) + (d[1] - along * dir[1]).powi(2) + (d[2] - along * dir[2]).powi(2)).sqrt();
+        worst_off = worst_off.max(off);
+        worst_turn = worst_turn.max(turn_between(r0, r));
+        assert!(along >= progress - 0.05, "went backwards: {along} after {progress}");
+        if along > 1.0 && along < len - 1.0 {
+            moving += 1;
+        }
+        progress = along;
+        if t.state == pb::RobotState::Ready as i32 && along > 1.0 {
+            break;
+        }
+        assert!(Instant::now() < deadline, "line did not finish");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let took = started.elapsed().as_secs_f64();
+    // Off the line by less than the step resolution of the joints.
+    assert!(worst_off < 0.3, "tool left the line by {worst_off:.3} mm");
+    assert!(worst_turn < 0.1, "tool turned by {worst_turn:.3} deg");
+    assert!(moving > 50, "{moving} samples mid-line");
+    // 126.5 mm at 60 mm/s with 500 mm/s² ramps: about 2.2 s.
+    assert!((2.0..3.2).contains(&took), "took {took:.2} s");
+    let end = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    let p = v3(&end.tool.unwrap().position_mm);
+    assert!((0..3).all(|k| (p[k] - p1[k]).abs() < 0.1), "{p:?} vs {p1:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_l_needs_a_serial_chain() {
+    let mut c = start(false).await;
+    let t = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    assert!(t.tool.is_none());
+    let e = c.engine.move_l(pb::MoveLRequest { position_mm: Some(pb::Vec3 { x: 1.0, y: 0.0, z: 0.0 }), ..Default::default() }).await.unwrap_err();
+    assert_eq!(code(&e), "bad_request");
+}

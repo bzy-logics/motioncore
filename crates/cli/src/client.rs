@@ -104,6 +104,14 @@ pub fn print_telemetry(t: &pb::Telemetry) {
             if a.endstop { "ENDSTOP" } else { "" }
         );
     }
+    if let Some(tool) = &t.tool {
+        let v = |v: &Option<pb::Vec3>| v.as_ref().map_or([0.0; 3], |v| [v.x, v.y, v.z]);
+        let (p, r) = (v(&tool.position_mm), v(&tool.rotation_deg));
+        println!(
+            "tool   x {:.2} y {:.2} z {:.2} mm   roll {:.2} pitch {:.2} yaw {:.2} deg",
+            p[0], p[1], p[2], r[0], r[1], r[2]
+        );
+    }
 }
 
 pub fn print_config(c: &pb::RobotConfig) {

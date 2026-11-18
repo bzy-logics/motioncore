@@ -123,8 +123,9 @@ hardware E-stop circuit; it cannot replace one.
 ## Known limitations
 
 * One MCU per robot; telemetry has one MCU block. Moves are joint-space
-  only: single-axis moves and coordinated joint moves (`MoveJ`), no Cartesian
-  moves or blending.
+  and Cartesian-line moves: single-axis moves, coordinated joint moves
+  (`MoveJ`), blended joint paths (`MoveJPath`) and Cartesian lines (`MoveL`,
+  serial chains only); no arcs and no blending between separate commands.
 * "Measured" position is the MCU step counter — no encoder feedback yet.
 * Serial transport, flashing and the STM32F411 and RP2040 firmware are
   untested on hardware.

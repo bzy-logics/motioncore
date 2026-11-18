@@ -51,6 +51,14 @@ service EngineService {
   // time on a straight line in joint space; unlisted axes hold. Every listed
   // axis must be homed. Added in 0.2.0.
   rpc MoveJ(MoveJRequest) returns (CommandResponse);
+  // Blended joint path: moves through the waypoints in order without
+  // stopping at intermediate ones (corners are rounded), starting and ending
+  // at rest. Every axis used must be homed. Added in 0.3.0.
+  rpc MoveJPath(MoveJPathRequest) returns (CommandResponse);
+  // Cartesian straight-line move of the tool point (MoveL). Needs a robot
+  // profile whose geometry is a single serial chain; every axis must be
+  // homed. Added in 0.3.0.
+  rpc MoveL(MoveLRequest) returns (CommandResponse);
   rpc Home(HomeRequest) returns (CommandResponse);
   // Run the robot's home-all plan: the axes of one group home at the same
   // time, groups in order. Added in 0.1.4.
@@ -142,6 +150,17 @@ message Telemetry {
   optional Fault fault = 4;
   McuTelemetry mcu = 5;
   repeated AxisTelemetry axes = 6;
+  // Tool pose from the measured joint positions; unset when the geometry is
+  // not a single serial chain (then MoveL is not available). Added in 0.3.0.
+  optional ToolPose tool = 7;
+}
+
+// Tool point of a serial chain: the tip of its last joint.
+message ToolPose {
+  // Position in the robot base frame, mm.
+  Vec3 position_mm = 1;
+  // Orientation as roll, pitch, yaw in degrees: R = Rz(yaw)·Ry(pitch)·Rx(roll).
+  Vec3 rotation_deg = 2;
 }
 
 message McuTelemetry {
@@ -369,6 +388,32 @@ message MoveJRequest {
   repeated JointTarget targets = 1;
   // Fraction of every axis' maximum velocity, 0 < scale <= 1; default 1.
   optional double speed_scale = 2;
+}
+
+message MoveJPathRequest {
+  // At least one waypoint, in order. Axes not listed in a waypoint keep their
+  // value from the previous waypoint (the first starts from the current
+  // position).
+  repeated JointWaypoint waypoints = 1;
+  // Fraction of every axis' maximum velocity, 0 < scale <= 1; default 1.
+  optional double speed_scale = 2;
+}
+
+message JointWaypoint {
+  repeated JointTarget targets = 1;
+}
+
+message MoveLRequest {
+  // Target tool position, mm, base frame.
+  Vec3 position_mm = 1;
+  // Target tool orientation (roll, pitch, yaw, deg); unset keeps the current
+  // orientation. Ignored for chains of fewer than six joints.
+  optional Vec3 rotation_deg = 2;
+  // Tool speed along the line, mm/s; default 50. Joint limits still apply:
+  // the move is slowed down where a joint would exceed its own.
+  optional double speed_mm_s = 3;
+  // Fraction of every axis' maximum velocity, 0 < scale <= 1; default 1.
+  optional double speed_scale = 4;
 }
 
 message JointTarget {

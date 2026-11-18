@@ -105,6 +105,20 @@ impl EngineService for EngineSvc {
         let targets: Vec<(String, f64)> = r.targets.into_iter().map(|t| (t.axis, t.position)).collect();
         done(self.engine.move_joints(&targets, r.speed_scale).await)
     }
+    async fn move_j_path(&self, r: Request<pb::MoveJPathRequest>) -> Res<pb::CommandResponse> {
+        let r = r.into_inner();
+        let waypoints: Vec<Vec<(String, f64)>> =
+            r.waypoints.into_iter().map(|w| w.targets.into_iter().map(|t| (t.axis, t.position)).collect()).collect();
+        done(self.engine.move_j_path(&waypoints, r.speed_scale).await)
+    }
+    async fn move_l(&self, r: Request<pb::MoveLRequest>) -> Res<pb::CommandResponse> {
+        let r = r.into_inner();
+        let v = |v: Option<pb::Vec3>| v.map(|v| [v.x, v.y, v.z]);
+        let Some(position) = v(r.position_mm) else {
+            return done(Err(crate::error::ApiError::new("bad_request", "position_mm is required")));
+        };
+        done(self.engine.move_l(position, v(r.rotation_deg), r.speed_mm_s, r.speed_scale).await)
+    }
     async fn home(&self, r: Request<pb::HomeRequest>) -> Res<pb::CommandResponse> {
         done(self.engine.home(&r.into_inner().axis).await)
     }

@@ -24,6 +24,14 @@ For an **unhomed** axis the planner limits are replaced: soft limits become ± o
 
 For `MoveJ`, `plan_synchronized_scaled` plans every listed joint with **shared phase times**: it takes the slowest joint's acceleration and cruise times and stretches them by the smallest factor `k ≥ 1` that keeps every joint within its limits. With phase times `k·ta` and `k·tc`, a joint moving `d` needs `v = d / (k·(ta+tc))` and `a = d / (k²·ta·(ta+tc))`, which gives `k` in closed form. Every joint is then at the same fraction of its distance at every instant: a straight line in joint space. With collision checking, that line is checked against the link model before planning continues.
 
+### Blended paths (`MoveJPath`)
+
+`motion::blend::plan_blended` joins the waypoints with constant-velocity segments and rounds every corner with a constant-acceleration blend shared by all joints. With τₖ the nominal time of waypoint k and dₖ = τₖ₊₁ − τₖ, joint j moves at vⱼₖ = Δⱼₖ / dₖ on segment k; the blend at waypoint k lasts tₖ = maxⱼ |vⱼₖ − vⱼ,ₖ₋₁| / aⱼ and is centred on τₖ (the first ends at t₀ and the last starts at T − tₙ, so the path starts and ends exactly on the waypoints). Durations start time-optimal and are stretched until dₖ ≥ (tₖ + tₖ₊₁) / 2. The result is one piecewise-constant-acceleration profile per joint with shared piece times, segmented exactly like a trapezoid.
+
+### Cartesian lines (`MoveL`)
+
+`kinematics::chain` builds a serial chain from the profile geometry (forward kinematics of the tool point and a Levenberg–Marquardt inverse-kinematics solver). `Chain::linear_path` samples the line every 0.5 mm / 0.25° and solves each sample from the previous one; it refuses lines that are out of reach, need a joint beyond its limits, or make a joint jump (a singularity or branch flip). `motion::sampled::time_scale` then picks a trapezoidal profile for the path parameter s(t) such that every joint respects its limits, using q̇ = q′(s)·ṡ and q̈ = q″(s)·ṡ² + q′(s)·s̈, and checks the sampled result. Planning runs outside the engine lock; the engine re-checks the state and positions before queuing.
+
 ## 4. Segmentation
 
 The profile is converted into constant-acceleration MCU segments:
@@ -33,6 +41,7 @@ The profile is converted into constant-acceleration MCU segments:
 - Each segment is at most **20 ms** long.
 - Segments are timestamped on the MCU clock, starting **100 ms** ahead of now, using the offset measured by clock sync.
 - The final segment is marked `last`.
+- `MoveL` trajectories are sampled every **10 ms**: each knot interval becomes a segment whose step count comes from rounded absolute positions and whose start velocity is the exact joint velocity at the knot. The acceleration is the smooth one between the knot velocities while the MCU's consistency rule allows, otherwise the one that lands exactly on the step count.
 - For `MoveJ`, all joints' segments share **one time grid**: the profiles have the same phase times, so every joint's segments start and end at the same MCU timestamps. Joints that do not move get no segments.
 
 ```rust
@@ -84,7 +93,7 @@ The strategy is a single-switch search. A back-off and slow second touch for bet
 
 ## Not yet implemented
 
-- **Cartesian moves.** `MoveJ` is straight in joint space; straight-line tool paths (MoveL) need inverse kinematics.
-- **Blending.** Each move starts and ends at rest; consecutive moves are not blended.
+- **Blending between separate commands.** `MoveJPath` blends the waypoints of one command; a new command still waits until the robot is `ready`.
+- **Cartesian paths other than lines.** `MoveL` moves along a straight line; arcs and blended Cartesian paths are not planned.
 - **Kinematics in the loop.** Only the joint-space identity solver exists.
 - **Encoder feedback.** Measured position is the step counter.

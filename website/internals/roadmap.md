@@ -10,7 +10,7 @@ MotionCore is at **v0.2 (development)**. The full design is in the [specificatio
 | 1 — Virtual MCU + Rust host | Protocol crate, framed transport, simulated MCU, handshake, clock sync, queue, fault telemetry | Done |
 | 2 — First physical axis | STM32 firmware: step/dir, enable, limit switch, watchdog, safe faults; validated with instruments | Firmware done; **hardware validation pending** |
 | 3 — Plugin SDK and device graph | Plugin lifecycle, capability resolution, example plugins, config validation | Done for builtin plugins; **WASM execution pending** |
-| 4 — Motion engine | Joint-space trajectories, trusted validation, homing, stop behaviour, virtual/physical parity | Single-axis moves and coordinated joint moves (MoveJ) done; Cartesian moves pending |
+| 4 — Motion engine | Joint-space trajectories, trusted validation, homing, stop behaviour, virtual/physical parity | Single-axis moves, coordinated joint moves (MoveJ), blended joint paths (MoveJPath) and Cartesian lines (MoveL) done |
 | 5 — Go API + React dashboard | Status, jog/homing, plugins, telemetry, 3D view | Done (ratavyr, sindrava) |
 | 6 — Firmware builder | Board selection, reproducible compile, flash, verify, logs | Done |
 | 7 — Multi-axis / AR4-MK5 | Real controller electronics, pinout, gearing; one joint → synchronised multi-joint | RP2040 six-channel firmware done; not started on the robot |
@@ -32,7 +32,7 @@ MotionCore is at **v0.2 (development)**. The full design is in the [specificatio
 ## Known limitations
 
 - One MCU per robot; telemetry has one MCU block.
-- Moves are joint-space only (MoveJ is straight in joint space); no Cartesian moves or blending between moves.
+- Cartesian moves are straight lines only (no arcs, no blended Cartesian paths); separate commands are not blended (MoveJPath blends within one command).
 - Measured position is the MCU step counter; no encoder feedback.
 - Serial transport, flashing and both boards' firmware are untested on hardware.
 - External WASM plugins are validated but not executed.

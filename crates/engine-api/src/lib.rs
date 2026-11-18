@@ -14,7 +14,7 @@ pub mod v1 {
 /// is pre-1.0). Bump on every change: PATCH for additive, compatible changes;
 /// MINOR for breaking changes and major features. Clients accept an engine
 /// with the same `0.MINOR` (see [`is_compatible`]).
-pub const API_VERSION: &str = "0.2.0";
+pub const API_VERSION: &str = "0.3.0";
 
 /// Whether an engine reporting `api_version` speaks a contract compatible
 /// with this crate's: same major and, while the major is 0, same minor.
@@ -48,10 +48,10 @@ mod tests {
     fn compatibility_is_same_zero_minor() {
         use super::is_compatible;
         assert!(is_compatible(super::API_VERSION));
-        assert!(is_compatible("0.2.0"));
-        assert!(is_compatible("0.2.99"));
-        assert!(!is_compatible("0.1.4"));
-        assert!(!is_compatible("0.3.0"));
+        assert!(is_compatible("0.3.0"));
+        assert!(is_compatible("0.3.99"));
+        assert!(!is_compatible("0.2.0"));
+        assert!(!is_compatible("0.4.0"));
         assert!(!is_compatible("1.2.0"));
         assert!(!is_compatible("garbage"));
         assert!(!is_compatible(""));
