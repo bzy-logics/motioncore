@@ -8,7 +8,9 @@
 //! Kinematics output is a *proposal*: the motion engine still validates every
 //! joint target against limits before anything moves.
 
+pub mod chain;
 pub mod collision;
+pub mod math;
 
 use thiserror::Error;
 

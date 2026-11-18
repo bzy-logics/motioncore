@@ -10,9 +10,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use motioncore_device_graph::{AxisSection, Direction, JointKind, ResolvedMcu, ResolvedRobot, Transport, Unit};
+use motioncore_kinematics::chain::{pose_from, Chain, ToolPose};
 use motioncore_kinematics::collision::{CollisionModel, JointSpec};
 use motioncore_mcu_manager::{McuError, McuEvent, McuLink};
-use motioncore_motion::{plan_axis_move, plan_synchronized_scaled, to_segments, AxisLimits, MotionError};
+use motioncore_motion::blend::plan_blended;
+use motioncore_motion::sampled::time_scale;
+use motioncore_motion::{plan_axis_move, plan_synchronized_scaled, to_segments, AxisLimits, MotionError, Profile};
 use motioncore_engine_api::v1 as pb;
 use motioncore_plugin_runtime::{PluginKind, PluginState, Registry};
 use motioncore_protocol::{
@@ -91,6 +94,9 @@ pub struct Engine {
     /// Capsule model (when every axis has a link radius) and the axis index
     /// of each model joint (the model lists parents first).
     collision: Option<(CollisionModel, Vec<usize>)>,
+    /// Serial chain for Cartesian moves and the tool pose, and the axis
+    /// index of each chain joint.
+    chain: Option<(Chain, Vec<usize>)>,
 }
 
 /// Build the collision model from the profile geometry, parents first.
@@ -98,6 +104,20 @@ fn collision_model(robot: &ResolvedRobot) -> Option<(CollisionModel, Vec<usize>)
     if !robot.has_collision_model() {
         return None;
     }
+    let (joints, order) = joint_specs(robot)?;
+    Some((CollisionModel::new(joints, COLLISION_MARGIN_MM), order))
+}
+
+/// The serial chain for Cartesian moves, when the geometry is one.
+fn serial_chain(robot: &ResolvedRobot) -> Option<(Chain, Vec<usize>)> {
+    let (joints, order) = joint_specs(robot)?;
+    let axes = &robot.file.axes;
+    let limits = order.iter().map(|&i| (axes[i].min, axes[i].max)).collect();
+    Chain::new(joints, limits).ok().map(|c| (c, order))
+}
+
+/// Joints of the profile geometry, parents first, and the axis index of each.
+fn joint_specs(robot: &ResolvedRobot) -> Option<(Vec<JointSpec>, Vec<usize>)> {
     let axes = &robot.file.axes;
     let mut order: Vec<usize> = Vec::with_capacity(axes.len());
     while order.len() < axes.len() {
@@ -136,8 +156,25 @@ fn collision_model(robot: &ResolvedRobot) -> Option<(CollisionModel, Vec<usize>)
             }
         })
         .collect();
-    Some((CollisionModel::new(joints, COLLISION_MARGIN_MM), order))
+    Some((joints, order))
 }
+
+fn vec3(v: [f64; 3]) -> pb::Vec3 {
+    pb::Vec3 { x: v[0], y: v[1], z: v[2] }
+}
+
+/// Planning steps of a Cartesian line: tool travel and rotation per sample.
+const LINE_STEP_MM: f64 = 0.5;
+const LINE_STEP_DEG: f64 = 0.25;
+/// Default and maximum tool speed of MoveL, mm/s.
+const LINE_SPEED_MM_S: f64 = 50.0;
+const LINE_SPEED_MAX_MM_S: f64 = 2000.0;
+/// Tool acceleration, rotation speed and acceleration of MoveL.
+const LINE_ACCEL_MM_S2: f64 = 500.0;
+const LINE_TURN_DEG_S: f64 = 45.0;
+const LINE_TURN_DEG_S2: f64 = 180.0;
+/// Most waypoints in one MoveJPath.
+const MAX_WAYPOINTS: usize = 256;
 
 impl Engine {
     pub fn new(robot: ResolvedRobot, plugins: Registry, opts: Options) -> anyhow::Result<Arc<Self>> {
@@ -157,6 +194,7 @@ impl Engine {
             .map(|a| AxisRt { cfg: a.clone(), homed: false, enabled: false, commanded: 0.0 })
             .collect();
         let collision = collision_model(&robot);
+        let chain = serial_chain(&robot);
         Ok(Arc::new(Self {
             robot,
             mcu,
@@ -175,6 +213,7 @@ impl Engine {
                 homing: None,
             }),
             collision,
+            chain,
             plugins: Mutex::new(plugins),
             started: Instant::now(),
             logs: broadcast::channel(256).0,
@@ -592,7 +631,7 @@ impl Engine {
             mcu.queue_depth = s.queue_depth as u32;
         }
         let homing_axes: BTreeSet<usize> = g.homing.as_ref().map(|r| r.pending.clone()).unwrap_or_default();
-        let axes = g
+        let axes: Vec<pb::AxisTelemetry> = g
             .axes
             .iter()
             .enumerate()
@@ -611,6 +650,11 @@ impl Engine {
                 }
             })
             .collect();
+        let tool = self.chain.as_ref().map(|(c, order)| {
+            let q: Vec<f64> = order.iter().map(|&k| axes[k].measured_position).collect();
+            let p = c.forward(&q);
+            pb::ToolPose { position_mm: Some(vec3(p.position)), rotation_deg: Some(vec3(p.rpy_deg())) }
+        });
         pb::Telemetry {
             seq: g.telemetry_seq,
             time_ms: self.time_ms(),
@@ -618,6 +662,7 @@ impl Engine {
             fault: g.sup.fault().map(fault_pb),
             mcu: Some(mcu),
             axes,
+            tool,
         }
     }
 
@@ -958,6 +1003,220 @@ impl Engine {
         let summary: Vec<String> = idx.iter().zip(&goals).map(|(&i, t)| format!("{} {t:.2}", g.axes[i].cfg.id)).collect();
         drop(g);
         self.log("debug", format!("move_j {} ({duration:.3} s at {:.0}% speed)", summary.join(", "), scale * 100.0));
+        Ok(())
+    }
+
+    /// Queue planned segments as one motion: time order across axes, state
+    /// to running, commanded positions to the move's end.
+    fn start_planned(&self, g: &mut Inner, mut segs: Vec<Segment>, start_us: u64, ends: &[(usize, f64)]) -> Result<(), ApiError> {
+        segs.sort_by_key(|s| (s.start_us, s.axis));
+        g.sup.apply(Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        g.last_end_us = segs.iter().map(|s| s.end_us()).max().unwrap_or(start_us);
+        g.pending.extend(segs);
+        for &(i, p) in ends {
+            g.axes[i].commanded = p;
+        }
+        Ok(())
+    }
+
+    /// Blended joint path (MoveJPath): through the waypoints in order
+    /// without stopping at intermediate ones; corners are rounded.
+    pub async fn move_j_path(&self, waypoints: &[Vec<(String, f64)>], speed_scale: Option<f64>) -> Result<(), ApiError> {
+        if waypoints.is_empty() || waypoints.iter().any(|w| w.is_empty()) {
+            return Err(ApiError::new("bad_request", "every waypoint needs at least one joint target"));
+        }
+        if waypoints.len() > MAX_WAYPOINTS {
+            return Err(ApiError::new("bad_request", format!("at most {MAX_WAYPOINTS} waypoints")));
+        }
+        // Resolve axis ids; `used` lists every axis any waypoint moves.
+        let mut used: Vec<usize> = Vec::new();
+        let mut resolved: Vec<Vec<(usize, f64)>> = Vec::with_capacity(waypoints.len());
+        for (n, w) in waypoints.iter().enumerate() {
+            let mut r = Vec::with_capacity(w.len());
+            for (axis, pos) in w {
+                let i = self.axis_index(axis)?;
+                if r.iter().any(|&(k, _)| k == i) {
+                    return Err(ApiError::new("bad_request", format!("waypoint {}: axis {axis} is listed twice", n + 1)));
+                }
+                if !pos.is_finite() {
+                    return Err(ApiError::new("validation_failed", format!("waypoint {}: target of {axis} must be finite", n + 1)));
+                }
+                if !used.contains(&i) {
+                    used.push(i);
+                }
+                r.push((i, *pos));
+            }
+            resolved.push(r);
+        }
+        used.sort();
+        let scale = speed_scale.unwrap_or(1.0);
+        if !(scale.is_finite() && scale > 0.0 && scale <= 1.0) {
+            return Err(ApiError::new("validation_failed", "speed_scale must be in (0, 1]"));
+        }
+
+        let mut g = self.inner.lock().unwrap();
+        g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+        if let Some(&i) = used.iter().find(|&&i| !g.axes[i].homed) {
+            return Err(ApiError::new("not_homed", format!("axis {} must be homed before a joint path", g.axes[i].cfg.id)));
+        }
+        // Full joint vectors of the used axes, waypoint by waypoint.
+        let mut wps: Vec<Vec<f64>> = vec![used.iter().map(|&i| g.axes[i].commanded).collect()];
+        for (n, r) in resolved.iter().enumerate() {
+            let mut next = wps.last().unwrap().clone();
+            for &(i, p) in r {
+                let c = &g.axes[i].cfg;
+                if p < c.min || p > c.max {
+                    return Err(ApiError::new(
+                        "validation_failed",
+                        format!("waypoint {}: target {p} of {} outside limits [{}, {}]", n + 1, c.id, c.min, c.max),
+                    ));
+                }
+                next[used.iter().position(|&k| k == i).unwrap()] = p;
+            }
+            wps.push(next);
+        }
+        let limits: Vec<AxisLimits> = used
+            .iter()
+            .map(|&i| {
+                let c = &g.axes[i].cfg;
+                AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
+            })
+            .collect();
+        let profiles = plan_blended(&wps, &limits, scale).map_err(motion_err)?;
+        let duration = profiles.first().map_or(0.0, |p| p.duration());
+        if duration == 0.0 {
+            return Ok(());
+        }
+        // Collision check of the rounded path, sampled finely in time.
+        if let Some((model, order)) = &self.collision {
+            if g.axes.iter().all(|x| x.homed) {
+                let pose_at = |t: f64| -> Vec<f64> {
+                    order.iter().map(|&k| used.iter().position(|&i| i == k).map_or(g.axes[k].commanded, |n| profiles[n].position(t))).collect()
+                };
+                let steps = ((duration / 0.005).ceil() as usize).max(1);
+                let mut prev = pose_at(0.0);
+                for k in 1..=steps {
+                    let t = duration * k as f64 / steps as f64;
+                    let cur = pose_at(t);
+                    if let Err(c) = model.check_path(&prev, &cur) {
+                        return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the path", 100.0 * t / duration)));
+                    }
+                    prev = cur;
+                }
+            }
+        }
+        let start_us = link.mcu_now_us() + LEAD_US;
+        let mut segs = Vec::new();
+        for (p, &i) in profiles.iter().zip(&used) {
+            let (lo, hi) = p.range();
+            if hi - lo > 0.0 {
+                let c = &g.axes[i].cfg;
+                segs.extend(to_segments(p, c.channel, c.steps_per_unit, start_us, MAX_SEGMENT_US));
+            }
+        }
+        if segs.is_empty() {
+            return Ok(());
+        }
+        let ends: Vec<(usize, f64)> = used.iter().zip(wps.last().unwrap()).map(|(&i, &p)| (i, p)).collect();
+        self.start_planned(&mut g, segs, start_us, &ends)?;
+        drop(g);
+        self.log("debug", format!("move_j_path {} waypoints ({duration:.3} s at {:.0}% speed)", waypoints.len(), scale * 100.0));
+        Ok(())
+    }
+
+    /// Cartesian straight-line move of the tool point (MoveL).
+    pub async fn move_l(&self, position: [f64; 3], rotation_deg: Option<[f64; 3]>, speed_mm_s: Option<f64>, speed_scale: Option<f64>) -> Result<(), ApiError> {
+        let Some((chain, order)) = &self.chain else {
+            return Err(ApiError::new("bad_request", "MoveL needs a robot profile whose geometry is a single serial chain"));
+        };
+        if position.iter().chain(rotation_deg.iter().flatten()).any(|v| !v.is_finite()) {
+            return Err(ApiError::new("validation_failed", "position and rotation must be finite"));
+        }
+        let speed = speed_mm_s.unwrap_or(LINE_SPEED_MM_S);
+        if !(speed.is_finite() && speed > 0.0 && speed <= LINE_SPEED_MAX_MM_S) {
+            return Err(ApiError::new("validation_failed", format!("speed_mm_s must be in (0, {LINE_SPEED_MAX_MM_S}]")));
+        }
+        let scale = speed_scale.unwrap_or(1.0);
+        if !(scale.is_finite() && scale > 0.0 && scale <= 1.0) {
+            return Err(ApiError::new("validation_failed", "speed_scale must be in (0, 1]"));
+        }
+        // Snapshot under the lock, plan without it.
+        let (q0, limits) = {
+            let g = self.inner.lock().unwrap();
+            g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+            g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+            if let Some(a) = g.axes.iter().find(|a| !a.homed) {
+                return Err(ApiError::new("not_homed", format!("axis {} must be homed before a Cartesian move", a.cfg.id)));
+            }
+            let q0: Vec<f64> = order.iter().map(|&k| g.axes[k].commanded).collect();
+            let limits: Vec<AxisLimits> = order
+                .iter()
+                .map(|&k| {
+                    let c = &g.axes[k].cfg;
+                    AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
+                })
+                .collect();
+            (q0, limits)
+        };
+        let start = chain.forward(&q0);
+        let target = match rotation_deg {
+            Some(r) if chain.controls_orientation() => pose_from(position, r),
+            _ => ToolPose { position, rotation: start.rotation },
+        };
+        let dist = (0..3).map(|k| (target.position[k] - start.position[k]).powi(2)).sum::<f64>().sqrt();
+        let turn = {
+            let r = &target.rotation;
+            let s = &start.rotation;
+            // Angle of r·sᵀ.
+            let tr: f64 = (0..3).map(|i| (0..3).map(|k| r[i][k] * s[i][k]).sum::<f64>()).sum();
+            ((tr - 1.0) / 2.0).clamp(-1.0, 1.0).acos().to_degrees()
+        };
+        if dist < 1e-3 && turn < 1e-3 {
+            return Ok(());
+        }
+        let path = chain.linear_path(&q0, &target, LINE_STEP_MM, LINE_STEP_DEG).map_err(|e| ApiError::new("validation_failed", format!("refused: {e}")))?;
+        if let Some((model, _)) = &self.collision {
+            // Same joint order as the chain (both from the profile geometry).
+            for (k, w) in path.windows(2).enumerate() {
+                if let Err(c) = model.check_path(&w[0], &w[1]) {
+                    return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the line", 100.0 * (k + 1) as f64 / (path.len() - 1) as f64)));
+                }
+            }
+        }
+        let s_speed = [(dist > 1e-9).then(|| speed / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
+        let s_accel =
+            [(dist > 1e-9).then(|| LINE_ACCEL_MM_S2 / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S2 / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
+        let traj = time_scale(&path, &limits, scale, s_speed, s_accel).map_err(motion_err)?;
+
+        let mut g = self.inner.lock().unwrap();
+        g.sup.check(&Event::StartMotion).map_err(|e| ApiError::invalid_state(e.to_string()))?;
+        if order.iter().zip(&q0).any(|(&k, &q)| g.axes[k].commanded != q) || g.axes.iter().any(|a| !a.homed) {
+            return Err(ApiError::invalid_state("the robot moved while the line was planned"));
+        }
+        let link = g.link.clone().filter(|l| l.is_alive()).ok_or_else(|| ApiError::mcu("MCU not connected"))?;
+        let start_us = link.mcu_now_us() + LEAD_US;
+        let mut segs = Vec::new();
+        for (j, &k) in order.iter().enumerate() {
+            let c = &g.axes[k].cfg;
+            segs.extend(traj.segments(j, c.channel, c.steps_per_unit, start_us));
+        }
+        if segs.is_empty() {
+            return Ok(());
+        }
+        let ends: Vec<(usize, f64)> = order.iter().zip(path.last().unwrap()).map(|(&k, &p)| (k, p)).collect();
+        self.start_planned(&mut g, segs, start_us, &ends)?;
+        drop(g);
+        self.log(
+            "debug",
+            format!(
+                "move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s",
+                position[0],
+                position[1],
+                position[2],
+                traj.duration()
+            ),
+        );
         Ok(())
     }
 

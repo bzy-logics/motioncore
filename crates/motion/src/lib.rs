@@ -8,6 +8,42 @@
 use motioncore_protocol::Segment;
 use thiserror::Error;
 
+pub mod blend;
+pub mod sampled;
+
+/// A one-axis motion profile made of constant-acceleration pieces, as the
+/// MCU executes them: `breakpoints` are the times where the acceleration
+/// may change, so a segment between two of them is exactly quadratic.
+pub trait Profile {
+    fn duration(&self) -> f64;
+    /// Position at `t` (clamped to the profile).
+    fn position(&self, t: f64) -> f64;
+    /// Signed velocity at `t`.
+    fn velocity(&self, t: f64) -> f64;
+    /// Signed acceleration in the piece that contains `t`.
+    fn accel_at(&self, t: f64) -> f64;
+    /// Piece boundaries, from 0 to the duration, ascending.
+    fn breakpoints(&self) -> Vec<f64>;
+}
+
+impl Profile for Trapezoid {
+    fn duration(&self) -> f64 {
+        Trapezoid::duration(self)
+    }
+    fn position(&self, t: f64) -> f64 {
+        Trapezoid::position(self, t)
+    }
+    fn velocity(&self, t: f64) -> f64 {
+        Trapezoid::velocity(self, t)
+    }
+    fn accel_at(&self, t: f64) -> f64 {
+        Trapezoid::accel_at(self, t)
+    }
+    fn breakpoints(&self) -> Vec<f64> {
+        self.phase_times().to_vec()
+    }
+}
+
 /// Kinematic limits of one axis, in axis units.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AxisLimits {
@@ -294,7 +330,7 @@ pub fn plan_synchronized_scaled(
 /// * Step counts are differences of rounded **absolute** step positions, so
 ///   rounding error never accumulates across segments.
 pub fn to_segments(
-    p: &Trapezoid,
+    p: &impl Profile,
     axis: u8,
     steps_per_unit: f64,
     start_us: u64,
@@ -302,7 +338,7 @@ pub fn to_segments(
 ) -> Vec<Segment> {
     let to_steps = |x: f64| (x * steps_per_unit).round() as i64;
     let mut times_us: Vec<u64> = Vec::new();
-    let phases = p.phase_times();
+    let phases = p.breakpoints();
     for w in phases.windows(2) {
         let (a, b) = ((w[0] * 1e6).round() as u64, (w[1] * 1e6).round() as u64);
         if b <= a {

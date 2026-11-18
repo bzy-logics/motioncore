@@ -64,68 +64,7 @@ impl fmt::Display for Collision {
     }
 }
 
-type V3 = [f64; 3];
-type M4 = [[f64; 4]; 4];
-
-fn mul(a: &M4, b: &M4) -> M4 {
-    let mut o = [[0.0; 4]; 4];
-    for (r, row) in o.iter_mut().enumerate() {
-        for (c, cell) in row.iter_mut().enumerate() {
-            *cell = (0..4).map(|k| a[r][k] * b[k][c]).sum();
-        }
-    }
-    o
-}
-
-fn translate(v: V3) -> M4 {
-    [
-        [1.0, 0.0, 0.0, v[0]],
-        [0.0, 1.0, 0.0, v[1]],
-        [0.0, 0.0, 1.0, v[2]],
-        [0.0, 0.0, 0.0, 1.0],
-    ]
-}
-
-fn rotate(u: V3, angle: f64) -> M4 {
-    let (s, c) = angle.sin_cos();
-    let t = 1.0 - c;
-    let [x, y, z] = u;
-    [
-        [t * x * x + c, t * x * y - s * z, t * x * z + s * y, 0.0],
-        [t * x * y + s * z, t * y * y + c, t * y * z - s * x, 0.0],
-        [t * x * z - s * y, t * y * z + s * x, t * z * z + c, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ]
-}
-
-fn rpy(r: V3) -> M4 {
-    let d = std::f64::consts::PI / 180.0;
-    mul(
-        &rotate([0.0, 0.0, 1.0], r[2] * d),
-        &mul(
-            &rotate([0.0, 1.0, 0.0], r[1] * d),
-            &rotate([1.0, 0.0, 0.0], r[0] * d),
-        ),
-    )
-}
-
-fn apply(m: &M4, p: V3) -> V3 {
-    [
-        m[0][0] * p[0] + m[0][1] * p[1] + m[0][2] * p[2] + m[0][3],
-        m[1][0] * p[0] + m[1][1] * p[1] + m[1][2] * p[2] + m[1][3],
-        m[2][0] * p[0] + m[2][1] * p[1] + m[2][2] * p[2] + m[2][3],
-    ]
-}
-
-fn sub(a: V3, b: V3) -> V3 {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-fn dot(a: V3, b: V3) -> f64 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
-}
-fn norm(a: V3) -> f64 {
-    dot(a, a).sqrt()
-}
+use crate::math::{apply, dot, mul, norm, rotate, rpy, sub, translate, M4, V3};
 
 /// Exact minimum distance between segments p1–q1 and p2–q2.
 pub fn segment_distance(p1: V3, q1: V3, p2: V3, q2: V3) -> f64 {
@@ -357,7 +296,7 @@ impl CollisionModel {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// The six-axis desktop arm of robot-profiles/dummy-arm-virtual.toml.
