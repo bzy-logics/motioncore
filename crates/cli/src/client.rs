@@ -33,13 +33,13 @@ pub async fn connect(addr: &str) -> Result<Client> {
 #[cfg(unix)]
 async fn unix_channel(path: &str) -> Result<Channel> {
     let path = path.to_string();
-    Ok(Endpoint::try_from("http://[::1]:0")?
+    Endpoint::try_from("http://[::1]:0")?
         .connect_with_connector(tower::service_fn(move |_| {
             let path = path.clone();
             async move { Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(tokio::net::UnixStream::connect(path).await?)) }
         }))
         .await
-        .context("connecting to engine socket (is `motioncore start` running?)")?)
+        .context("connecting to engine socket (is `motioncore start` running?)")
 }
 
 #[cfg(not(unix))]
