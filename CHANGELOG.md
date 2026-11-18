@@ -9,7 +9,7 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 **Nothing in this release is hardware-validated.** The RP2040 and STM32F411 firmware compiles and is host-tested, but has not been measured on a bench yet (#25). MotionCore is not a certified safety system: always use an independent hardware E-stop that removes driver power.
 
-## [0.3.0] — unreleased
+## [0.3.0] — 2026-11-19
 
 The first MotionCore release, and the baseline that v0.4 (verified motion on hardware) is measured against.
 
