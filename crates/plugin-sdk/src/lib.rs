@@ -6,12 +6,14 @@
 //! (`motioncore-plugin-runtime`) depends on this crate, never the other way.
 //!
 //! Compatibility: [`API_VERSION`] changes only on breaking changes to this
-//! crate. Manifests declaring a different `api_version` are rejected.
+//! crate. Manifests declaring a different `api_version` are rejected. It is
+//! `"0"` while the plugin interface is unstable (pre-1.0); `"1"` will mark
+//! the first stable interface.
 
 use serde::{Deserialize, Serialize};
 
-/// Host plugin API version.
-pub const API_VERSION: &str = "1";
+/// Host plugin API version: `"0"` while the interface is unstable.
+pub const API_VERSION: &str = "0";
 
 /// Permissions a plugin may request. Anything else is rejected.
 pub const KNOWN_PERMISSIONS: &[&str] = &[
@@ -133,14 +135,14 @@ mod tests {
         assert!(m().validate().is_ok());
         assert!(Manifest { id: "Bad".into(), ..m() }.validate().is_err());
         assert!(Manifest { version: "x".into(), ..m() }.validate().is_err());
-        assert!(Manifest { api_version: "2".into(), ..m() }.validate().is_err());
+        assert!(Manifest { api_version: "1".into(), ..m() }.validate().is_err());
         assert!(Manifest { permissions: vec!["hw.raw".into()], ..m() }.validate().is_err());
         assert!(Manifest { provides: vec![], ..m() }.validate().is_err());
     }
 
     #[test]
     fn parses_toml() {
-        let t = "id = \"org.a.b\"\nversion = \"0.1.0\"\napi_version = \"1\"\nkind = \"wasm\"\nentrypoint = \"p.wasm\"\nprovides = [\"k\"]\n";
+        let t = "id = \"org.a.b\"\nversion = \"0.1.0\"\napi_version = \"0\"\nkind = \"wasm\"\nentrypoint = \"p.wasm\"\nprovides = [\"k\"]\n";
         let m: Manifest = toml::from_str(t).unwrap();
         assert_eq!(m.kind, PluginKind::Wasm);
         assert!(toml::from_str::<Manifest>(&format!("{t}bogus = 1\n")).is_err());
