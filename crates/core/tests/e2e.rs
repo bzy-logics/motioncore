@@ -138,6 +138,10 @@ async fn start(fault_injection: bool) -> Client {
 }
 
 async fn start_with(name: &str, fault_injection: bool) -> Client {
+    start_opts(name, engine::Options { fault_injection, ..Default::default() }).await
+}
+
+async fn start_opts(name: &str, opts: engine::Options) -> Client {
     let path = profile(name);
     let robot = motioncore_device_graph::load(&path).unwrap();
     let axis_ids: Vec<String> = robot.file.axes.iter().map(|a| a.id.clone()).collect();
@@ -146,7 +150,7 @@ async fn start_with(name: &str, fault_injection: bool) -> Client {
         reg.add_builtin(p);
     }
     assert!(reg.start(&PluginContext { robot_name: "t".into(), axis_ids }).is_empty());
-    let eng = engine::Engine::new(robot, reg, engine::Options { fault_injection }).unwrap();
+    let eng = engine::Engine::new(robot, reg, opts).unwrap();
     eng.spawn();
     let jobs = FirmwareJobs::new(None, path);
     // Reserve a free port, then serve on it.
@@ -709,4 +713,63 @@ async fn move_l_needs_a_serial_chain() {
     assert!(t.tool.is_none());
     let e = c.engine.move_l(pb::MoveLRequest { position_mm: Some(pb::Vec3 { x: 1.0, y: 0.0, z: 0.0 }), ..Default::default() }).await.unwrap_err();
     assert_eq!(code(&e), "bad_request");
+}
+
+fn axis0(t: &pb::Telemetry) -> (f64, f64) {
+    (t.axes[0].measured_position, t.axes[0].commanded_position)
+}
+
+/// #22: a Stop that arrives while a move is being planned wins; the planned
+/// move is not committed and nothing moves.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_during_planning_wins_and_nothing_is_sent() {
+    let opts = engine::Options { planning_delay: Duration::from_millis(400), ..Default::default() };
+    let mut c = start_opts("single-axis-virtual.toml", opts).await;
+    c.engine.enable(pb::EnableRequest {}).await.unwrap();
+    c.wait_state("ready", T).await;
+    let before = axis0(&c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner());
+
+    let mut mover = c.engine.clone();
+    let jog = tokio::spawn(async move { mover.jog(pb::JogRequest { axis: "j1".into(), delta: 10.0, velocity: None }).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    c.engine.stop(pb::StopRequest {}).await.unwrap();
+
+    let e = jog.await.unwrap().unwrap_err();
+    assert_eq!(code(&e), "invalid_state", "{}", e.message());
+    assert!(e.message().contains("changed while the move was planned"), "{}", e.message());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let after = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+    assert_eq!(after.state, pb::RobotState::Ready as i32);
+    assert_eq!(axis0(&after), before, "nothing may move");
+}
+
+/// #22: planning runs outside the engine lock, so status requests are served
+/// promptly while a move is being planned, and the move then commits.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn telemetry_keeps_flowing_while_a_move_is_planned() {
+    let opts = engine::Options { planning_delay: Duration::from_millis(600), ..Default::default() };
+    let mut c = start_opts("single-axis-virtual.toml", opts).await;
+    c.engine.enable(pb::EnableRequest {}).await.unwrap();
+    c.wait_state("ready", T).await;
+    let (_, start) = axis0(&c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner());
+
+    let mut mover = c.engine.clone();
+    let jog = tokio::spawn(async move { mover.jog(pb::JogRequest { axis: "j1".into(), delta: 5.0, velocity: None }).await });
+    let planning_until = Instant::now() + Duration::from_millis(450);
+    let mut polls = 0;
+    while Instant::now() < planning_until {
+        let t0 = Instant::now();
+        let s = c.engine.get_status(pb::GetStatusRequest {}).await.unwrap().into_inner();
+        assert!(t0.elapsed() < Duration::from_millis(200), "status took {:?} during planning", t0.elapsed());
+        assert_eq!(s.state, pb::RobotState::Ready as i32, "nothing is committed while planning");
+        polls += 1;
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(polls >= 5, "{polls} status polls during planning");
+    jog.await.unwrap().unwrap();
+    let done =
+        c.wait_for("jog done", Duration::from_secs(10), |s| s["state"] == "ready" && s["axes"][0]["commanded_position"].as_f64().unwrap() != start).await;
+    let end = done["axes"][0]["commanded_position"].as_f64().unwrap();
+    // Within one step (the commanded position is resynced from the MCU step counter).
+    assert!((end - start - 5.0).abs() < 0.05, "{start} -> {end}");
 }

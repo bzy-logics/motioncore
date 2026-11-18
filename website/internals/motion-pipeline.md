@@ -30,7 +30,17 @@ For `MoveJ`, `plan_synchronized_scaled` plans every listed joint with **shared p
 
 ### Cartesian lines (`MoveL`)
 
-`kinematics::chain` builds a serial chain from the profile geometry (forward kinematics of the tool point and a Levenberg–Marquardt inverse-kinematics solver). `Chain::linear_path` samples the line every 0.5 mm / 0.25° and solves each sample from the previous one; it refuses lines that are out of reach, need a joint beyond its limits, or make a joint jump (a singularity or branch flip). `motion::sampled::time_scale` then picks a trapezoidal profile for the path parameter s(t) such that every joint respects its limits, using q̇ = q′(s)·ṡ and q̈ = q″(s)·ṡ² + q′(s)·s̈, and checks the sampled result. Planning runs outside the engine lock; the engine re-checks the state and positions before queuing.
+`kinematics::chain` builds a serial chain from the profile geometry (forward kinematics of the tool point and a Levenberg–Marquardt inverse-kinematics solver). `Chain::linear_path` samples the line every 0.5 mm / 0.25° and solves each sample from the previous one; it refuses lines that are out of reach, need a joint beyond its limits, or make a joint jump (a singularity or branch flip). `motion::sampled::time_scale` then picks a trapezoidal profile for the path parameter s(t) such that every joint respects its limits, using q̇ = q′(s)·ṡ and q̈ = q″(s)·ṡ² + q′(s)·s̈, and checks the sampled result.
+
+### Planning off the engine lock
+
+Every motion command (jog, MoveTo, MoveJ, MoveJPath, MoveL) runs in three phases:
+
+1. **Snapshot**, under the engine lock: state check, start positions, limits and the engine's *state revision*.
+2. **Plan**, outside the lock on a blocking worker: profile, collision check and MCU segments timed from zero. Telemetry, Stop and E-stop are never held up by planning.
+3. **Commit**, under the lock: the move is refused with `invalid_state` ("the robot state changed while the move was planned; nothing was sent") if the revision changed; otherwise the segments are placed on the MCU clock (100 ms ahead) and queued.
+
+The revision changes with every supervisor transition (including Stop, E-stop, faults, enable/disable, homing and motion start/end), whenever planned motion is discarded, when commanded positions are resynced from the MCU, and when an axis is homed. A Stop that arrives while a move is being planned therefore always wins.
 
 ## 4. Segmentation
 
