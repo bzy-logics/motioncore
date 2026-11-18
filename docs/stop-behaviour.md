@@ -131,8 +131,6 @@ The robot's confidence is the lowest of its axes'. Confidence is raised only by 
 
 ### 5.2 Events that lower confidence
 
-> **Proposed — awaiting owner confirmation.** The levels are the owner's decision; this mapping of events to levels is a proposal written into the accepted specification for review.
-
 | Event | Resulting confidence |
 |---|---|
 | Hardware E-stop, software E-stop | Lost (all axes) |
@@ -281,6 +279,6 @@ Decided by the project owner on 2026-11-19 (#20):
 4. **Revalidate the remaining trajectory — yes.** Joint limits, kinematic configuration, collision geometry, tool and workpiece, safety constraints; failure refuses Resume and requires recovery (7.5).
 5. **Roles — refined** as in 9.2: viewer Pause only by policy; operator Pause and Resume; administrator configures recovery and reset policies; any authorized user may Stop; hardware E-stop independent of permissions.
 6. **Stop latency — yes, with measurable criteria:** four metrics L1–L4 under worst-case conditions; no safety-rated claims from software measurements (section 8).
-7. **Additional requirement — position confidence** (Known / Uncertain / Lost) with Resume prohibited unless the required confidence is restored (section 5). The event mapping in 5.2 is a proposal pending confirmation.
+7. **Additional requirement — position confidence** (Known / Uncertain / Lost) with Resume prohibited unless the required confidence is restored (section 5). The event mapping in 5.2 was confirmed by the owner on 2026-11-19.
 
-Specification decisions made while writing this document, open to review: the 20 ms bound for the coordinated Stop's reaction (8.2), viewer Pause off by default (9.2), and a refused Resume discarding the paused motion (section 7).
+Also confirmed by the owner on 2026-11-19: the 20 ms bound for the coordinated Stop's reaction (8.2), viewer Pause off by default (9.2), and a refused Resume discarding the paused motion (section 7).
