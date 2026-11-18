@@ -14,6 +14,18 @@ MotionCore is **not a certified safety system**. It is designed to be safety-con
 4. **Plugins propose, the core decides.** Anything motion-related from a plugin passes the planner's validation and the MCU's own checks before a single step is emitted.
 5. **Hardware safety is independent.** The hardware E-stop must work with Linux, the engine, the gateway and every plugin dead.
 
+## Stop, pause and emergency stop
+
+| Function | Drives | Path | Positions afterwards |
+|---|---|---|---|
+| **Hardware E-stop** | Power removed by the safety circuit | Not controlled | Lost: re-home |
+| **Software E-stop** (`estop`) | ENABLE released at once, step output halted; latches | Not controlled | Lost: re-home |
+| **Stop** (`stop`) | Stay enabled | Each axis brakes on its own: a coordinated or Cartesian move **may leave its planned path** while stopping | Kept |
+| **Disable** | Controlled stop, then released | As Stop | Kept, but no holding torque |
+| **Fault** | Released at once by the MCU; latches | Not controlled | Lost: re-home |
+
+A Stop or E-stop that arrives while a move is still being planned cancels it: nothing is sent. Pause and resume (a feed hold that stays on the path) are specified but not implemented yet. The full specification, including the state × action table, latency targets and validation status, is in [`docs/stop-behaviour.md`](https://github.com/bzy-logics/motioncore/blob/main/docs/stop-behaviour.md).
+
 ## What each layer enforces
 
 ### MCU firmware
