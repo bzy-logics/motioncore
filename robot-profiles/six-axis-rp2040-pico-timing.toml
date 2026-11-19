@@ -1,0 +1,195 @@
+# BENCH TIMING PROFILE: NO MOTORS. Drivers unpowered (or no drivers).
+#
+# The six-axis Raspberry Pi Pico wiring of six-axis-rp2040-pico.toml, with
+# limits opened up for the pulse-timing tests of docs/rp2040.md section 9
+# (see docs/validation/rp2040-bench-session.md):
+#
+# * max_velocity 1125 deg/s at 44.444444 steps/deg = 50 000 steps/s per axis,
+#   the board's advertised maximum (tests 3, 4, 6, 7 and 9 at 1, 10 and
+#   50 kHz);
+# * soft limits +-20000 deg, so a constant-velocity jog can run for over a
+#   second at 50 kHz (test 6 counts edges over 1 s);
+# * acceleration 22500 deg/s^2 (50 ms ramp to 50 kHz).
+#
+# These numbers mean nothing for a real machine. Never use this profile with
+# motors connected: it would drive any mechanism far beyond its travel.
+# Homing: close each endstop input by hand (jumper to GND) while its axis is
+# searching; every axis homes to -20000 deg.
+schema = 1
+
+[robot]
+name = "six-axis-rp2040-timing"
+profile = "org.motioncore.robot.six_axis"
+
+[mcu.main]
+board = "rp2040-pico"
+transport = "serial:///dev/ttyACM0"
+watchdog_ms = 500
+
+[[axis]]
+id = "j1"
+name = "Base"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 0
+steps_per_unit = 44.444444
+min = -20000.0
+max = 20000.0
+max_velocity = 1125.0
+max_acceleration = 22500.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP0"
+dir_pin = "GP1"
+enable_pin = "GP12"
+
+[axis.endstop]
+pin = "GP18"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -20000.0
+max_travel = 41000.0
+
+[[axis]]
+id = "j2"
+name = "Shoulder"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 1
+steps_per_unit = 44.444444
+min = -20000.0
+max = 20000.0
+max_velocity = 1125.0
+max_acceleration = 22500.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP2"
+dir_pin = "GP3"
+enable_pin = "GP13"
+
+[axis.endstop]
+pin = "GP19"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -20000.0
+max_travel = 41000.0
+
+[[axis]]
+id = "j3"
+name = "Elbow"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 2
+steps_per_unit = 44.444444
+min = -20000.0
+max = 20000.0
+max_velocity = 1125.0
+max_acceleration = 22500.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP4"
+dir_pin = "GP5"
+enable_pin = "GP14"
+
+[axis.endstop]
+pin = "GP20"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -20000.0
+max_travel = 41000.0
+
+[[axis]]
+id = "j4"
+name = "Wrist roll"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 3
+steps_per_unit = 44.444444
+min = -20000.0
+max = 20000.0
+max_velocity = 1125.0
+max_acceleration = 22500.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP6"
+dir_pin = "GP7"
+enable_pin = "GP15"
+
+[axis.endstop]
+pin = "GP21"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -20000.0
+max_travel = 41000.0
+
+[[axis]]
+id = "j5"
+name = "Wrist pitch"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 4
+steps_per_unit = 44.444444
+min = -20000.0
+max = 20000.0
+max_velocity = 1125.0
+max_acceleration = 22500.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP8"
+dir_pin = "GP9"
+enable_pin = "GP16"
+
+[axis.endstop]
+pin = "GP22"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -20000.0
+max_travel = 41000.0
+
+[[axis]]
+id = "j6"
+name = "Tool"
+kind = "revolute"
+unit = "deg"
+mcu = "main"
+channel = 5
+steps_per_unit = 44.444444
+min = -20000.0
+max = 20000.0
+max_velocity = 1125.0
+max_acceleration = 22500.0
+
+[axis.driver]
+actuator = "org.motioncore.actuator.step_dir"
+step_pin = "GP10"
+dir_pin = "GP11"
+enable_pin = "GP17"
+
+[axis.endstop]
+pin = "GP26"
+
+[axis.homing]
+direction = "negative"
+speed = 45.0
+position = -20000.0
+max_travel = 41000.0
