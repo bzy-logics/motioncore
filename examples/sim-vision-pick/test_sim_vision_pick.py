@@ -138,7 +138,8 @@ class Vision(unittest.TestCase):
 
 class MoveJContract(unittest.TestCase):
     def test_params_name_every_joint(self):
-        self.assertEqual(movej_params(["j1", "j2"], [1.23456, -2.0]), {"targets": {"j1": 1.2346, "j2": -2.0}})
+        self.assertEqual(movej_params(["j1", "j2"], [1.23456, -2.0], 0.5),
+                         {"targets": {"j1": 1.2346, "j2": -2.0}, "speed_scale": 0.5})
 
 
 if __name__ == "__main__":
