@@ -74,10 +74,14 @@ pub fn time_scale(path: &[Vec<f64>], limits: &[AxisLimits], speed_scale: f64, s_
     if !(finite("path speed", s_speed)? > 0.0 && finite("path acceleration", s_accel)? > 0.0) {
         return Err(MotionError::NonPositive("path speed"));
     }
-    for q in path {
+    // The start (the current position) may sit a fraction of a step outside
+    // the limits after step-quantised position feedback, e.g. a joint resting
+    // at its soft limit; every other point must be inside. (Same rule as
+    // `blend::plan_blended`.)
+    for (k, q) in path.iter().enumerate() {
         for (&x, l) in q.iter().zip(limits) {
             finite("path", x)?;
-            if x < l.min - 1e-9 || x > l.max + 1e-9 {
+            if k > 0 && (x < l.min - 1e-9 || x > l.max + 1e-9) {
                 return Err(MotionError::OutOfLimits { target: x, min: l.min, max: l.max });
             }
         }
@@ -156,12 +160,24 @@ fn interp(rows: &[Vec<f64>], s: f64) -> Vec<f64> {
 
 fn sample(path: &[Vec<f64>], d1: &[Vec<f64>], s: &Trapezoid) -> Sampled {
     let total_us = (s.duration() * 1e6).ceil().max(1.0) as u64;
-    let mut t_us: Vec<u64> = (0..).map(|k| k * KNOT_US as u64).take_while(|&t| t < total_us).collect();
-    // Merge a very short final interval into the previous one.
-    if t_us.len() > 1 && total_us - t_us.last().unwrap() < KNOT_US as u64 / 4 {
-        t_us.pop();
-    }
+    // Knots every KNOT_US, plus the phase boundaries of s(t) (end of the
+    // ramp up, start of the ramp down). An MCU segment has one constant
+    // acceleration; a knot interval that contains a phase boundary cannot
+    // be represented by one, and the step-count correction then overshoots
+    // the velocity limit (found by the property tests, #23). Grid knots
+    // closer than KNOT_US / 4 to a boundary or the end are dropped, so no
+    // interval is very short.
+    let phase: Vec<u64> = [s.t_accel, s.t_accel + s.t_cruise].iter().map(|t| (t * 1e6).round() as u64).filter(|&t| t > 0 && t < total_us).collect();
+    let near = |t: u64, b: u64| t.abs_diff(b) < KNOT_US as u64 / 4;
+    let mut t_us: Vec<u64> = (0..)
+        .map(|k| k * KNOT_US as u64)
+        .take_while(|&t| t < total_us)
+        .filter(|&t| t == 0 || !(phase.iter().any(|&b| near(t, b)) || near(t, total_us)))
+        .collect();
+    t_us.extend(phase);
     t_us.push(total_us);
+    t_us.sort_unstable();
+    t_us.dedup();
     let mut q = Vec::with_capacity(t_us.len());
     let mut v = Vec::with_capacity(t_us.len());
     for (k, &t) in t_us.iter().enumerate() {
@@ -247,6 +263,45 @@ mod tests {
                 assert!(x.v0.abs() <= (60.0 * 0.8 * 1.05 * spu) as f32 && x.end_velocity().abs() <= (60.0 * 0.8 * 1.05 * spu) as f32);
             }
             assert!(segs.last().unwrap().last);
+        }
+    }
+
+    /// Regression (#23): a joint resting at its soft limit reports a
+    /// step-quantised position a fraction of a step outside (180° at
+    /// 213.333333 steps/° is 38400 steps = 180.00000028°). A straight line
+    /// that starts there was refused with "outside limits".
+    #[test]
+    fn accepts_a_start_a_fraction_of_a_step_outside_the_limits() {
+        let l = AxisLimits { min: -180.0, max: 180.0, max_velocity: 60.0, max_acceleration: 200.0 };
+        let spu: f64 = 213.333333;
+        let start = (180.0 * spu).round() / spu;
+        assert!(start > 180.0);
+        // The IK clamps its seed into the limits, so later points are inside.
+        let path = vec![vec![start, 0.0], vec![180.0, 10.0], vec![179.0, 20.0]];
+        let s = time_scale(&path, &[l, L], 1.0, 1.0, 10.0).unwrap();
+        assert_eq!(s.q[0], path[0]);
+        // Points after the start must still be inside.
+        let out = vec![vec![0.0, 0.0], vec![180.5, 10.0]];
+        assert!(matches!(time_scale(&out, &[l, L], 1.0, 1.0, 10.0), Err(MotionError::OutOfLimits { .. })));
+    }
+
+    /// Regression (#23, found by the property tests): with a ramp shorter
+    /// than two knots, the end of the ramp fell inside a 10 ms knot interval.
+    /// One constant-acceleration segment cannot follow "accelerate, then
+    /// cruise", and the step-count correction pushed the segment's end
+    /// velocity above the MCU's rate limit (max_rate · 1.01 + 1), which the
+    /// MCU refuses mid-move.
+    #[test]
+    fn knots_follow_the_phase_boundaries_of_short_ramps() {
+        let l = AxisLimits { min: 0.0, max: 584.4817204181895, max_velocity: 9.911503097229474, max_acceleration: 793.4603022113835 };
+        let spu = 1551.1399690023861;
+        let scale = 0.9828339769870822;
+        let n = 315;
+        let path: Vec<Vec<f64>> = (0..=n).map(|i| vec![314.80589099515936 * (1.0 - i as f64 / n as f64)]).collect();
+        let s = time_scale(&path, &[l], scale, 0.05, 71.59503936452782).unwrap();
+        let limit = (l.max_velocity * spu * 1.05) as f32 * 1.01 + 1.0;
+        for x in s.segments(0, 0, spu, 0) {
+            assert!(x.v0.abs() <= limit && x.end_velocity().abs() <= limit, "{x:?} exceeds {limit} steps/s");
         }
     }
 
