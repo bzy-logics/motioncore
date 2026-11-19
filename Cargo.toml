@@ -91,6 +91,8 @@ tonic = "0.12"
 prost = "0.13"
 tonic-build = "0.12"
 protox = "0.7"
+# Test-only: property-based tests (dev-dependency of motioncore-motion).
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 # Embedded profile for board crates (opt for size, LTO, abort on panic).
 [profile.firmware]
