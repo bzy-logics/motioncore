@@ -21,8 +21,19 @@ Input is a CSV export: a time column in seconds, then one column per digital
 channel (0/1). sigrok-cli (`-O csv`) and Saleae Logic ("Time [s]") exports
 work; rows may be every sample or only transitions. Pass the STEP columns by
 name or index. Exit status is 1 when the skew (largest minus smallest
-offset) or a channel's jitter exceeds its limit (defaults: 50 µs skew,
-250 µs jitter, i.e. one 200 µs PIO window plus margin on the RP2040).
+offset) exceeds `--max-skew-us` (default 50 µs), or when an edge deviates
+from its channel's offset by more than `--max-jitter-us` **plus**
+`--max-jitter-steps` steps at that edge's local step rate (defaults: 250 µs,
+i.e. one 200 µs PIO window plus margin on the RP2040, plus 1 step).
+
+Why the step allowance: correct firmware puts every edge within one window of
+its ideal time plus up to about one step (step quantisation and per-segment
+step rounding). Where a channel steps slowly, in the ramps or on a slow axis,
+one step is long: at 2 800 steps/s it is 355 µs. A pure µs limit would fail
+healthy hardware there (#110). Jitter is reported both in µs and in steps
+(deviation × local rate). The simulator timing tests
+(`cargo test -p motioncore-simulator --test timing`) check the tool against
+simulated ground truth with these defaults.
 
 Capture one MoveJ from rest to rest in which every axis moves in a single
 direction, for example on the six-axis RP2040 bench profile after homing:

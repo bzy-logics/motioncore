@@ -521,15 +521,12 @@ fn link_loss_mid_move_faults_and_stops_stepping() {
 
 /// Write the MoveJ STEP edges as a logic-analyser CSV and check the
 /// `tools/step-skew` analysis against the ground truth: every axis ran from
-/// the same clock, so the reported skew must be within one tick. Several
-/// steps due in one tick are spread evenly over that tick (a CSV row cannot
-/// hold two edges of one channel at the same instant). Skipped when Python
-/// is not available.
-///
-/// Jitter is printed but not limited: the tool reports it in µs, and near
-/// the ends of the ramps (inside its 5 % trim) a slow axis's correct sub-step
-/// deviation is several hundred µs (j2: 271 µs at 2817 steps/s, where one
-/// step is 355 µs), above the tool's 250 µs default.
+/// the same clock, so the reported skew must be within one tick, and the
+/// jitter within the tool's default limits (one window plus one step at the
+/// local rate: in the ramps j2 deviates 271 µs at 2817 steps/s, 0.79 step).
+/// Several steps due in one tick are spread evenly over that tick (a CSV row
+/// cannot hold two edges of one channel at the same instant). Skipped when
+/// Python is not available.
 fn check_step_skew_tool(rig: &Rig, plan: &Plan) {
     // `PYTHON` names the interpreter when it is not on PATH as an executable
     // (e.g. a pyenv-win .bat shim).
@@ -570,10 +567,10 @@ fn check_step_skew_tool(rig: &Rig, plan: &Plan) {
     let out = std::process::Command::new(&python)
         .arg(&tool)
         .arg(&file)
-        .args(["--step", "D0,D1,D2,D3,D4,D5", "--max-skew-us", &TICK_US.to_string(), "--max-jitter-us", "1000"])
+        .args(["--step", "D0,D1,D2,D3,D4,D5", "--max-skew-us", &TICK_US.to_string()])
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     eprintln!("tools/step-skew on the simulated MoveJ capture:\n{text}{}", String::from_utf8_lossy(&out.stderr));
-    assert!(out.status.success(), "step-skew reports more than one tick of skew on simulated ground truth:\n{text}");
+    assert!(out.status.success(), "step-skew rejects simulated ground truth (skew above one tick, or jitter above its defaults):\n{text}");
 }
