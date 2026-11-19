@@ -97,6 +97,6 @@ Performance limits must be **measured** on your hardware, not assumed.
 
 ## Known gaps
 
-- Joint limits do not guarantee collision-free motion; there is no geometry or environment model yet.
+- Joint limits alone do not guarantee collision-free motion. With link radii, moves are checked against a capsule model of the robot itself and the floor ([collision checking](/guide/configuration#collision-checking)); there is no model of anything else in the cell.
 - "Measured" position is the MCU step counter. There is no encoder feedback, so missed steps are not detected.
 - On RP2040, endstop and fault reaction can trail the commanded position by one 200 µs window.

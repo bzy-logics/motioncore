@@ -133,7 +133,11 @@ Links are drawn from each joint to the joints mounted on it; `tip` gives the las
 
 #### Collision checking
 
-Give every axis a `radius` and the engine models each link as a capsule of that thickness. Once **every** axis is homed, each `move_to`, `jog` and `move_j` is checked before it starts: the moving joints are swept to their targets along the move's straight joint-space path with the others held still, and the move is refused (error `collision`) if two links would come closer than 2 mm or a link would reach the floor. A move that only increases the clearance is always allowed, so a robot that is already too close can back out. Sindrava's 3D viewer runs the same check on its preview and turns it red.
+Give every axis a `radius` and the engine models each link as a capsule of that thickness. Once **every** axis is homed, every move (`move_to`, `jog`, `move_j`, `move_j_path`, `move_l`) is checked before it starts and refused (error `collision`) if two links would come closer than 2 mm or a link would reach the floor. Sindrava's 3D viewer runs the same check on its preview and turns it red.
+
+The 2 mm hold along the whole planned path, not only at the poses the check evaluates. The engine knows from the geometry how fast each joint can move any point of a link, and from each checked pose it steps only as far as the remaining clearance allows: long steps far from other links, short ones near them. A path that cannot be shown to keep 2 mm (to within 0.01 mm) is refused. Accepted moves log the certified clearance, e.g. `clearance >= 2.7 mm`.
+
+The guarantee is about the capsule model and the planned joint path. It does not cover geometry the profile does not describe (choose radii with room to spare), objects in the cell, or how closely the motors follow the plan (±1 step in simulation; not yet measured on hardware). A robot that is already closer than 2 mm may back out: no such gap may shrink by more than 0.1 mm on the way or end smaller than it started.
 
 Links that touch by construction (a joint and the one mounted on it, or the joints of a spherical wrist) are not compared. The model is only as good as the radii: choose them to enclose the real links, motors and cables. Before homing, positions are unknown and nothing is checked.
 

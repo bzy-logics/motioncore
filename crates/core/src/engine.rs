@@ -124,6 +124,15 @@ fn axis_limits(c: &AxisSection) -> AxisLimits {
     AxisLimits { min: c.min, max: c.max, max_velocity: c.max_velocity, max_acceleration: c.max_acceleration }
 }
 
+/// ", clearance ≥ … mm" for a log line: the certified lowest gap of a checked
+/// move (nothing when the move was not checked or tests no bodies).
+fn clearance_note(min_gap: Option<f64>) -> String {
+    match min_gap {
+        Some(g) if g.is_finite() => format!(", clearance >= {g:.1} mm"),
+        _ => String::new(),
+    }
+}
+
 /// Build the collision model from the profile geometry, parents first.
 fn collision_model(robot: &ResolvedRobot) -> Option<(CollisionModel, Vec<usize>)> {
     if !robot.has_collision_model() {
@@ -952,17 +961,21 @@ impl Engine {
         let collision = self.collision.clone();
         let planned = self
             .plan_off_lock(move || {
+                let mut clearance = None;
                 if let (Some(m), Some(pose)) = (&collision, &pose) {
                     let (model, order) = m.as_ref();
                     let q: Vec<f64> = order.iter().map(|&k| pose[k]).collect();
                     let mi = order.iter().position(|&k| k == i).expect("every axis is in the model");
                     let to = if relative { target.clamp(cfg.min, cfg.max) } else { target };
-                    if let Err(c) = model.check_sweep(&q, mi, to) {
-                        let at = c.at[mi];
-                        return Err(ApiError::new(
-                            "collision",
-                            format!("refused: {c} when {} reaches {at:.1} {}", cfg.id, if cfg.kind == JointKind::Prismatic { "mm" } else { "deg" }),
-                        ));
+                    match model.check_sweep(&q, mi, to) {
+                        Ok(r) => clearance = Some(r.min_gap),
+                        Err(c) => {
+                            let at = c.at[mi];
+                            return Err(ApiError::new(
+                                "collision",
+                                format!("refused: {c} when {} reaches {at:.1} {}", cfg.id, if cfg.kind == JointKind::Prismatic { "mm" } else { "deg" }),
+                            ));
+                        }
                     }
                 }
                 let profile = plan_axis_move(start, target, velocity, &limits).map_err(motion_err)?;
@@ -972,7 +985,7 @@ impl Engine {
                 Ok(Some(PlannedMotion {
                     segs: to_segments(&profile, cfg.channel, cfg.steps_per_unit, 0, MAX_SEGMENT_US),
                     ends: vec![(i, target)],
-                    log: format!("move {} -> {target:.3} ({:.3} s)", cfg.id, profile.duration()),
+                    log: format!("move {} -> {target:.3} ({:.3} s){}", cfg.id, profile.duration(), clearance_note(clearance)),
                 }))
             })
             .await?;
@@ -1033,15 +1046,19 @@ impl Engine {
                 }
                 // Self-collision check along the whole joint-space path, once
                 // every axis is homed (the model needs the full pose).
+                let mut clearance = None;
                 if let (Some(m), true) = (&collision, all_homed) {
                     let (model, order) = m.as_ref();
                     let target_of = |k: usize| idx.iter().position(|&i| i == k).map_or(pose[k], |n| goals[n]);
                     let from: Vec<f64> = order.iter().map(|&k| pose[k]).collect();
                     let to: Vec<f64> = order.iter().map(|&k| target_of(k)).collect();
-                    if let Err(c) = model.check_path(&from, &to) {
-                        let at: Vec<String> =
-                            order.iter().enumerate().filter(|(_, k)| idx.contains(k)).map(|(m, &k)| format!("{} {:.1}", axes[k].id, c.at[m])).collect();
-                        return Err(ApiError::new("collision", format!("refused: {c} at {}", at.join(", "))));
+                    match model.check_path(&from, &to) {
+                        Ok(r) => clearance = Some(r.min_gap),
+                        Err(c) => {
+                            let at: Vec<String> =
+                                order.iter().enumerate().filter(|(_, k)| idx.contains(k)).map(|(m, &k)| format!("{} {:.1}", axes[k].id, c.at[m])).collect();
+                            return Err(ApiError::new("collision", format!("refused: {c} at {}", at.join(", "))));
+                        }
                     }
                 }
                 // One time grid for every axis: the profiles share their phase
@@ -1059,7 +1076,7 @@ impl Engine {
                 Ok(Some(PlannedMotion {
                     segs,
                     ends: idx.iter().copied().zip(goals.iter().copied()).collect(),
-                    log: format!("move_j {} ({duration:.3} s at {:.0}% speed)", summary.join(", "), scale * 100.0),
+                    log: format!("move_j {} ({duration:.3} s at {:.0}% speed){}", summary.join(", "), scale * 100.0, clearance_note(clearance)),
                 }))
             })
             .await?;
@@ -1156,22 +1173,32 @@ impl Engine {
                 if duration == 0.0 {
                     return Ok(None);
                 }
-                // Collision check of the rounded path, sampled finely in time.
+                // Collision check of the rounded path: the straight lines
+                // between poses 5 ms apart, each widened by how far the curve
+                // can bow away from it (a·dt²/8 per joint).
+                let mut clearance = None;
                 if let (Some(m), true) = (&collision, all_homed) {
                     let (model, order) = m.as_ref();
-                    let pose_at = |t: f64| -> Vec<f64> {
-                        order.iter().map(|&k| used.iter().position(|&i| i == k).map_or(pose[k], |n| profiles[n].position(t))).collect()
-                    };
+                    let profile_of = |k: usize| used.iter().position(|&i| i == k).map(|n| &profiles[n]);
+                    let pose_at = |t: f64| -> Vec<f64> { order.iter().map(|&k| profile_of(k).map_or(pose[k], |p| p.position(t))).collect() };
                     let steps = ((duration / 0.005).ceil() as usize).max(1);
+                    let dt = duration / steps as f64;
+                    let bow: Vec<f64> = order
+                        .iter()
+                        .map(|&k| profile_of(k).map_or(0.0, |p| p.pieces.iter().map(|x| x.accel.abs()).fold(0.0, f64::max) * dt * dt / 8.0))
+                        .collect();
                     let mut prev = pose_at(0.0);
+                    let mut lowest = f64::INFINITY;
                     for k in 1..=steps {
                         let t = duration * k as f64 / steps as f64;
                         let cur = pose_at(t);
-                        if let Err(c) = model.check_path(&prev, &cur) {
-                            return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the path", 100.0 * t / duration)));
+                        match model.check_path_within(&prev, &cur, &bow) {
+                            Ok(r) => lowest = lowest.min(r.min_gap),
+                            Err(c) => return Err(ApiError::new("collision", format!("refused: {c} at {:.0} % of the path", 100.0 * t / duration))),
                         }
                         prev = cur;
                     }
+                    clearance = Some(lowest);
                 }
                 let mut segs = Vec::new();
                 for (p, &i) in profiles.iter().zip(&used) {
@@ -1186,7 +1213,7 @@ impl Engine {
                 Ok(Some(PlannedMotion {
                     segs,
                     ends: used.iter().copied().zip(wps.last().unwrap().iter().copied()).collect(),
-                    log: format!("move_j_path {count} waypoints ({duration:.3} s at {:.0}% speed)", scale * 100.0),
+                    log: format!("move_j_path {count} waypoints ({duration:.3} s at {:.0}% speed){}", scale * 100.0, clearance_note(clearance)),
                 }))
             })
             .await?;
@@ -1246,17 +1273,25 @@ impl Engine {
                 }
                 let path =
                     chain.linear_path(&q0, &target, LINE_STEP_MM, LINE_STEP_DEG).map_err(|e| ApiError::new("validation_failed", format!("refused: {e}")))?;
+                // The planned joint path is the polyline through the IK
+                // samples (the time-scaling interpolates linearly between them).
+                let mut clearance = None;
                 if let Some(m) = &collision {
                     // Same joint order as the chain (both from the profile geometry).
                     let (model, _) = m.as_ref();
+                    let mut lowest = f64::INFINITY;
                     for (k, w) in path.windows(2).enumerate() {
-                        if let Err(c) = model.check_path(&w[0], &w[1]) {
-                            return Err(ApiError::new(
-                                "collision",
-                                format!("refused: {c} at {:.0} % of the line", 100.0 * (k + 1) as f64 / (path.len() - 1) as f64),
-                            ));
+                        match model.check_path(&w[0], &w[1]) {
+                            Ok(r) => lowest = lowest.min(r.min_gap),
+                            Err(c) => {
+                                return Err(ApiError::new(
+                                    "collision",
+                                    format!("refused: {c} at {:.0} % of the line", 100.0 * (k + 1) as f64 / (path.len() - 1) as f64),
+                                ))
+                            }
                         }
                     }
+                    clearance = Some(lowest);
                 }
                 let s_speed =
                     [(dist > 1e-9).then(|| speed / dist), (turn > 1e-9).then(|| LINE_TURN_DEG_S / turn)].into_iter().flatten().fold(f64::INFINITY, f64::min);
@@ -1276,11 +1311,12 @@ impl Engine {
                     segs,
                     ends: order.iter().copied().zip(path.last().unwrap().iter().copied()).collect(),
                     log: format!(
-                        "move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s",
+                        "move_l to ({:.1}, {:.1}, {:.1}) mm: {dist:.1} mm, {turn:.1} deg, {:.3} s{}",
                         position[0],
                         position[1],
                         position[2],
-                        traj.duration()
+                        traj.duration(),
+                        clearance_note(clearance)
                     ),
                 }))
             })

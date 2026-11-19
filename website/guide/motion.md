@@ -39,7 +39,7 @@ motioncore movej j1=60 j2=30 j3=120 j4=90 j5=-60 j6=180 --speed 0.5
 - **Timing.** Every joint gets a trapezoidal profile with the **same** acceleration, cruise and deceleration times: those of the slowest joint, stretched by the smallest factor that keeps every joint within its `max_velocity` and `max_acceleration`. A joint with less distance to cover simply moves more slowly.
 - **Path.** Because the phase times are shared, each joint is always at the same fraction of its own distance. The path is a **straight line in joint space** (not in Cartesian space: the tool does not move in a straight line).
 - **Speed.** `--speed` (`speed_scale`, 0 < scale ≤ 1, default 1) scales every joint's velocity limit; acceleration limits are unchanged.
-- **Rules.** Every listed joint must be homed and its target within the soft limits; each joint may be listed once. With [collision checking](/guide/configuration#collision-checking), the whole path is checked before anything moves (every 0.5° / 1 mm of the joint that moves furthest) and refused with `collision` if links would touch.
+- **Rules.** Every listed joint must be homed and its target within the soft limits; each joint may be listed once. With [collision checking](/guide/configuration#collision-checking), the whole path is checked before anything moves and refused with `collision` if links would come within 2 mm; the clearance is certified between the checked poses too.
 - **Execution.** The engine converts every joint's profile into MCU segments on one time grid, so segments of all joints start and end at the same MCU timestamps, and feeds them in time order. The MCU runs every axis from the same clock tick. In simulation all six joints of the desktop arm stay at the same fraction of their move to within one step.
 
 ![The six-axis arm in the middle of a coordinated move: j1, j2 and j5 each 45 % of the way](/screenshots/dummy-arm-movej.png)
@@ -54,7 +54,7 @@ motioncore movej-path "j1=0 j2=0 j3=90 j4=0 j5=0 j6=0" "j1=60 j2=30 j3=120 j4=90
 
 - **Path.** The waypoints are joined by straight joint-space segments, travelled at constant velocity. Every corner is **rounded** by a constant-acceleration blend shared by all joints, so the robot passes *near* intermediate waypoints (the blend cuts the corner) and exactly through the first and last.
 - **Timing.** Each segment starts at the time-optimal duration for its slowest joint; blends last as long as the largest velocity change needs at the joints' `max_acceleration`. Segments are stretched until every blend fits. The robot slows down only as much as a corner requires: a corner that doubles back on itself passes through zero velocity.
-- **Rules.** As for `movej`: every joint used must be homed, every waypoint within the soft limits (errors name the waypoint), at most 256 waypoints. With collision checking, the rounded path is checked before anything moves.
+- **Rules.** As for `movej`: every joint used must be homed, every waypoint within the soft limits (errors name the waypoint), at most 256 waypoints. With collision checking, the whole rounded path is checked before anything moves (as straight lines 5 ms apart, widened by how far the curve can bow away from them).
 - **Execution.** Every piece has constant acceleration, so the MCU segments are exact, as for single moves.
 
 ## Cartesian moves (MoveL)
@@ -69,7 +69,7 @@ motioncore movel 89.4 120 106.7 --speed 60
 - **Requirements.** The profile's [geometry](/guide/configuration#_7-geometry-optional) must be a single serial chain (each joint mounted on the previous one); the tip of the last joint is the tool point. Every axis must be homed. Telemetry then carries the tool pose (`tool`), computed from the measured joint positions.
 - **Planning.** The line is sampled every 0.5 mm and 0.25° of tool motion; a numeric inverse-kinematics solver (damped least squares, starting from the previous sample so the arm stays on its branch) gives the joint values. The move is refused when the line is out of reach, would need a joint beyond its soft limits, or passes so close to a singularity that a joint would jump.
 - **Speed.** `--speed` is the tool speed along the line (default 50 mm/s, at most 2000), with 500 mm/s² ramps; rotation is limited to 45°/s. Where a joint would exceed its own `max_velocity` or `max_acceleration`, the whole move is slowed down so the line is kept. `--speed-scale` scales the joint velocity limits as for `movej`.
-- **Safety.** With collision checking, every step of the line is checked before anything moves. The MCU receives 10 ms segments sampled from the joint trajectory; position errors do not accumulate (step counts come from absolute positions). In simulation, the measured tool point stays within 0.3 mm of the line.
+- **Safety.** With collision checking, the joint path through the line's inverse-kinematics samples (every 0.5 mm / 0.25°) is checked before anything moves, with the clearance certified between samples. The MCU receives 10 ms segments sampled from the joint trajectory; position errors do not accumulate (step counts come from absolute positions). In simulation, the measured tool point stays within 0.3 mm of the line.
 
 ## Homed vs. unhomed
 

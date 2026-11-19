@@ -61,7 +61,7 @@ Positions, deltas and velocities are in the axis display unit (`deg` or `mm`).
 
 Command RPCs return when the engine has **accepted** the command. Follow progress through `StreamEvents`.
 
-When `RobotConfig.collision_checking` is true and every axis is homed, `Jog`, `MoveTo` and `MoveJ` are refused with `collision` if the swept move would bring two links within 2 mm of each other, or a link to the floor; the message names the links and the joint value. See [Collision checking](/guide/configuration#collision-checking).
+When `RobotConfig.collision_checking` is true and every axis is homed, `Jog`, `MoveTo`, `MoveJ`, `MoveJPath` and `MoveL` are refused with `collision` if the planned path could bring two links within 2 mm of each other, or a link to the floor; the message names the links and the joint value. See [Collision checking](/guide/configuration#collision-checking).
 
 ## `FirmwareService`
 
