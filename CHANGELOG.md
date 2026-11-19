@@ -9,6 +9,20 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 **Nothing in this release is hardware-validated.** The RP2040 and STM32F411 firmware compiles and is host-tested, but has not been measured on a bench yet (#25). MotionCore is not a certified safety system: always use an independent hardware E-stop that removes driver power.
 
+## [Unreleased]
+
+### Fixed — software-tested
+
+- MoveL was refused from a pose with a joint resting at its soft limit: the step-quantised position sits a fraction of a step outside (e.g. 180° at 213.333333 steps/° reads 180.00000028°), and the start point was checked against the limits too (#23).
+- MoveL could send a segment above the MCU's step-rate limit when an acceleration ramp ended between two 10 ms knots; the MCU refuses such a segment mid-move. Knots now also sit on the ramp boundaries (#23).
+- MoveJPath lagged its plan by up to ~1.7 steps where a joint reverses inside a blended corner: the MCU cannot run one segment backwards then forwards. Segments are now split at velocity reversals (#24).
+- `examples/sim-vision-pick` used a guessed command name and never ran MoveJ; it now uses `move_j` and, for descend and lift, `move_l` (#107).
+
+### Tests
+
+- Property-based planner tests: single-axis moves, MoveJ, MoveJPath and MoveL time-scaling, 1000 random cases each, checked against the kinematic limits and the MCU's own segment rules (#23).
+- Simulated execution timing: the firmware runtime on a simulated clock runs MoveJ, MoveJPath and MoveL on the six-axis arm within ±1 step and one tick of the plan; Stop decelerates at the configured rate; no step after an E-stop or a link-loss fault (#24). `tools/step-skew` is checked against this ground truth; its jitter limit flags correct slow-axis timing (#110).
+
 ## [0.3.0] — 2026-11-19
 
 The first MotionCore release, and the baseline that v0.4 (verified motion on hardware) is measured against.
