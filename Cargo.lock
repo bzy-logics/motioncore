@@ -1291,6 +1291,7 @@ dependencies = [
  "motioncore-device-graph",
  "motioncore-mcu-manager",
  "motioncore-protocol",
+ "motioncore-simulator",
  "serde",
  "serde_json",
  "sha2",

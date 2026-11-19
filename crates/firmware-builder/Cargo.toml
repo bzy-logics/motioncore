@@ -16,3 +16,6 @@ toml = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true }
 tokio-serial = { workspace = true }
+
+[dev-dependencies]
+motioncore-simulator = { workspace = true }

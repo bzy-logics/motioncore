@@ -372,6 +372,17 @@ impl Engine {
                 clock.rtt_us
             ),
         );
+        let bench: Vec<&str> = motioncore_protocol::caps::bench_features(id.capabilities).collect();
+        if !bench.is_empty() {
+            self.log(
+                "warn",
+                format!(
+                    "MCU '{}' runs a BENCH TEST BUILD ({}): for bench measurements only, never for production; flash a production build afterwards",
+                    self.mcu.name,
+                    bench.join(", ")
+                ),
+            );
+        }
         let mut g = self.inner.lock().unwrap();
         g.identity = Some(id);
         for a in g.axes.iter_mut() {

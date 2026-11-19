@@ -15,9 +15,9 @@ Copy this file to `docs/validation/rp2040-YYYY-MM-DD.md` and fill it in. Procedu
 | Host | OS, USB port |
 | Engine | `motioncore info` output |
 | Profile | `robot-profiles/six-axis-rp2040-pico-timing.toml` @ commit |
-| Build A (release) hash | |
-| Build B (tick-ISR probe) hash + description of the local edit | |
-| Build C (bench-panic) hash | |
+| Build A (production) hash | |
+| Build B (`--bench bench-isr-probe`) hash | |
+| Build C (`--bench bench-panic`) hash | |
 | Captures | link to the zip on the issue |
 
 ## Results
@@ -33,7 +33,7 @@ Result: **pass**, **fail** (link the new issue) or **not run** (why).
 | 5 | DIR setup / hold | A | DIR edge → next STEP rise; last STEP fall → DIR edge, µs | ≥ 2.0 / ≥ 2.2 µs | | |
 | 6 | Frequency accuracy | A | edges in 1 s at 1 / 10 / 50 kHz; total steps vs commanded | within 0.1 %; exact total | | |
 | 7 | Jitter | B | STEP period histogram at constant velocity: min, max, spread | spread ≤ one 200 µs window effect; no period below minimum | | |
-| 8 | Max sustainable rate | A | highest rate without `StepRateExceeded` (≤ 50 kHz via engine, see session section 5) | record; advertised ≤ 50 % of it | | |
+| 8 | Max sustainable rate | A | `firmware rate-test` output: highest passing rate, the fault that ended the sweep | record; advertised ≤ 50 % of it | | |
 | 9 | Six axes simultaneously | B | six channels at 50 kHz: fault? max ISR time (GP28 high) µs | no fault; ISR < 100 µs | | |
 | 10 | Stop latency | A | `estop`: frame receipt → last STEP edge; → ENABLE high, ms | both within 1 ms | | |
 | 11 | Watchdog | A | USB unplug → ENABLE high, ms | ≤ 500 ms | | |
@@ -57,4 +57,5 @@ Result: **pass**, **fail** (link the new issue) or **not run** (why).
 
 - [ ] Every row has a result and a capture.
 - [ ] Failures are filed and linked.
+- [ ] Build A reflashed; `firmware verify` reports `build type: production`.
 - [ ] `rp2040.md` section 9 summary updated; issues moved to Done; changelog validation levels updated for what was measured.

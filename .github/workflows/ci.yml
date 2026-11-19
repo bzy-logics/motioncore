@@ -64,8 +64,17 @@ jobs:
           key: ${{ matrix.target }}
       - name: clippy
         run: cargo clippy -p ${{ matrix.crate }} --target ${{ matrix.target }} -- -D warnings
-      - name: clippy (bench-panic test build)
-        run: cargo clippy -p ${{ matrix.crate }} --target ${{ matrix.target }} --features bench-panic -- -D warnings
+      - name: clippy (bench test builds)
+        run: |
+          for f in bench-panic bench-isr-probe; do
+            cargo clippy -p ${{ matrix.crate }} --target ${{ matrix.target }} --features "$f" -- -D warnings
+          done
+      - name: bench features that share a pin are refused together
+        run: |
+          if cargo check -p ${{ matrix.crate }} --target ${{ matrix.target }} --features bench-panic,bench-isr-probe 2>err.txt; then
+            echo "bench-panic + bench-isr-probe must not compile"; exit 1
+          fi
+          grep -q "build one at a time" err.txt
       - name: build
         run: cargo build -p ${{ matrix.crate }} --profile firmware --target ${{ matrix.target }}
 

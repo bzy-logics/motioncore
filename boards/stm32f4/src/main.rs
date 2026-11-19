@@ -121,7 +121,7 @@ fn main() -> ! {
         gpioa.pa1,
         gpioa.pa2,
         gpiob.pb0,
-        #[cfg(feature = "bench-panic")]
+        #[cfg(any(feature = "bench-panic", feature = "bench-isr-probe"))]
         gpiob.pb1,
     );
 
@@ -219,6 +219,8 @@ fn main() -> ! {
 fn TIM3() {
     critical_section::with(|cs| {
         if let Some(s) = SHARED.borrow(cs).borrow_mut().as_mut() {
+            #[cfg(feature = "bench-isr-probe")]
+            s.hal.isr_probe(true);
             s.timer.clear_flags(Flag::Update);
             let now = s.clock.now_us();
             s.core.tick(now, &mut s.hal);
@@ -226,6 +228,8 @@ fn TIM3() {
             if s.hal.panic_requested() {
                 panic!("bench-panic trigger (PB1)");
             }
+            #[cfg(feature = "bench-isr-probe")]
+            s.hal.isr_probe(false);
         }
     });
 }

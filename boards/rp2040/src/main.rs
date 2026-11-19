@@ -226,6 +226,8 @@ fn main() -> ! {
 fn TIMER_IRQ_0() {
     critical_section::with(|cs| {
         if let Some(s) = SHARED.borrow(cs).borrow_mut().as_mut() {
+            #[cfg(feature = "bench-isr-probe")]
+            s.hal.isr_probe(true);
             s.alarm.clear_interrupt();
             let now = s.timer.get_counter().ticks();
             // Absolute schedule (no drift); if the interrupt ran late, realign.
@@ -240,6 +242,8 @@ fn TIMER_IRQ_0() {
             if s.hal.panic_requested() {
                 panic!("bench-panic trigger (GP28)");
             }
+            #[cfg(feature = "bench-isr-probe")]
+            s.hal.isr_probe(false);
         }
     });
 }
