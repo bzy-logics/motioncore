@@ -1400,6 +1400,8 @@ version = "0.3.0"
 dependencies = [
  "motioncore-device-graph",
  "motioncore-firmware-core",
+ "motioncore-kinematics",
+ "motioncore-motion",
  "motioncore-protocol",
  "tokio",
 ]
