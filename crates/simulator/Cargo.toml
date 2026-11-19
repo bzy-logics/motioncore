@@ -10,3 +10,7 @@ motioncore-protocol = { workspace = true }
 motioncore-firmware-core = { workspace = true }
 motioncore-device-graph = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+motioncore-motion = { workspace = true }
+motioncore-kinematics = { workspace = true }

@@ -312,12 +312,32 @@ pub fn plan_synchronized_scaled(starts: &[f64], targets: &[f64], limits: &[AxisL
 ///
 /// * Segments never straddle a phase boundary, so each one is exactly
 ///   quadratic and the MCU's `v0·t + ½·a·t²` model is exact.
+/// * Segments never straddle a velocity reversal either: the MCU keeps a
+///   segment's position within `[0, steps]`, so the backward part of a
+///   segment that turns around would be dropped (the axis then lags the
+///   plan by the depth of the turn). Blended corners (MoveJPath) reverse
+///   inside a constant-acceleration piece.
 /// * Step counts are differences of rounded **absolute** step positions, so
 ///   rounding error never accumulates across segments.
 pub fn to_segments(p: &impl Profile, axis: u8, steps_per_unit: f64, start_us: u64, max_segment_us: u32) -> Vec<Segment> {
     let to_steps = |x: f64| (x * steps_per_unit).round() as i64;
     let mut times_us: Vec<u64> = Vec::new();
-    let phases = p.breakpoints();
+    let mut phases = p.breakpoints();
+    let mut reversals = Vec::new();
+    for w in phases.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let acc = p.accel_at(0.5 * (a + b));
+        if b > a && acc != 0.0 {
+            // Velocity is linear within a piece: v(t) = v(mid) + acc·(t − mid).
+            let mid = 0.5 * (a + b);
+            let tz = mid - p.velocity(mid) / acc;
+            if tz > a + 1e-6 && tz < b - 1e-6 {
+                reversals.push(tz);
+            }
+        }
+    }
+    phases.extend(reversals);
+    phases.sort_by(f64::total_cmp);
     for w in phases.windows(2) {
         let (a, b) = ((w[0] * 1e6).round() as u64, (w[1] * 1e6).round() as u64);
         if b <= a {
@@ -518,5 +538,40 @@ mod sync_input_tests {
     #[test]
     fn zero_axes_plan_to_empty_trajectory() {
         assert_eq!(plan_synchronized(&[], &[], &[]), Ok(Vec::new()));
+    }
+}
+
+#[cfg(test)]
+mod reversal_tests {
+    use super::*;
+
+    const L: AxisLimits = AxisLimits { min: -180.0, max: 180.0, max_velocity: 60.0, max_acceleration: 200.0 };
+
+    /// Regression (#24, found by the simulator timing tests): a blended
+    /// corner reverses a joint inside a constant-acceleration piece. The MCU
+    /// keeps a segment's position within [0, steps], so a segment that turns
+    /// around lost its backward part and the axis lagged the plan by the
+    /// depth of the turn. Every segment must now move in one direction.
+    #[test]
+    fn segments_never_straddle_a_velocity_reversal() {
+        let spu = 266.666667;
+        // Corners of different shapes; in an asymmetric one the turn falls
+        // between segment boundaries. The first is j3 of the simulator's
+        // MoveJPath scenario.
+        let paths: [&[f64]; 4] =
+            [&[120.0, 100.0, 140.0, 90.0, 120.0], &[0.0, 40.0, -30.0, 20.0], &[0.0, 7.0, -50.0, 3.0, 90.0], &[10.0, -3.0, 60.0, 59.0, -20.0]];
+        for path in paths {
+            let w: Vec<Vec<f64>> = path.iter().map(|&x| vec![x]).collect();
+            let ps = blend::plan_blended(&w, &[L], 1.0).unwrap();
+            let segs = to_segments(&ps[0], 0, spu, 0, 20_000);
+            for s in &segs {
+                let v1 = s.end_velocity();
+                // A segment ending exactly at the turn has an end velocity of
+                // ±rounding; a real reversal has both ends clearly moving.
+                assert!(!(s.v0 * v1 < 0.0 && s.v0.abs().min(v1.abs()) > 1.0), "{path:?}: segment reverses: {s:?}");
+            }
+            let total: i64 = segs.iter().map(|s| s.steps as i64).sum();
+            assert_eq!(total, (path.last().unwrap() * spu).round() as i64 - (path[0] * spu).round() as i64);
+        }
     }
 }
