@@ -1,15 +1,15 @@
 # RP2040 bench session (tests 1–16)
 
-How to run the RP2040 hardware validation of [`docs/rp2040.md`](../rp2040.md) §9 in one or two bench days, and what to record so the results count as **hardware-validated** under the project's Definition of Done. The test definitions and pass criteria stay in `rp2040.md` §9; this page is the practical order, setup and record keeping.
+How to run the RP2040 hardware validation of [`docs/rp2040.md`](../rp2040.md) section 9 in one or two bench days, and what to record so the results count as **hardware-validated** under the project's Definition of Done. The test definitions and pass criteria stay in `rp2040.md` section 9; this page is the practical order, setup and record keeping.
 
 | Issue | Tests |
 |---|---|
 | #25 RP2040 six-axis STEP/DIR bench validation | 1–14 |
 | #13 Coordinated-move skew | 15 |
 | #68 Safe state on firmware panic | 16 |
-| #26 Six-axis MoveJ on hardware | after 1–16, see §6 |
+| #26 Six-axis MoveJ on hardware | after 1–16, see section 6 |
 
-> **No motor power during tests 1–16.** Drivers unpowered, or no drivers at all. Motors come only after every test passes (§6), at low current and with no load.
+> **No motor power during tests 1–16.** Drivers unpowered, or no drivers at all. Motors come only after every test passes (section 6), at low current and with no load.
 
 ## 1. Equipment
 
@@ -91,7 +91,7 @@ The order keeps each build and wiring change to a minimum.
 | 4 | 10 Stop latency, 11 Watchdog, 13 Interlock, 14 Endstop | A | S | Test 11: unplug USB while enabled. Test 13: pull the GP27 jumper while moving |
 | 5 | 12 Hang | A | S | Halt core 0 with the SWD probe |
 | 6 | 7 Jitter, 9 Six axes | B | S then M | Test 9: `motioncore movej` all six axes the same distance at `--speed 1` (50 kHz each) |
-| 7 | 15 Skew | A | M | `rp2040.md` §9.1; analyse with `tools/step-skew` (default limits) |
+| 7 | 15 Skew | A | M | `rp2040.md` section 9.1; analyse with `tools/step-skew` (default limits) |
 | 8 | 16 Panic safe state | C | M | Tie GP28 to GND during a six-axis move |
 | 9 | Reflash build A, then `motioncore firmware verify` | A | – | – |
 
@@ -100,7 +100,7 @@ The order keeps each build and wiring change to a minimum.
 ## 6. After tests 1–16: #26 and motors
 
 - **#26:** with build A and layout M, run a six-axis `movej`, a `movej-path` with reversals, and a Stop mid-move, at 25% and 100% speed. Compare the exact step counts per channel with the planned targets; analyse skew with `tools/step-skew`.
-- **Only after everything passes:** motors at low current, no load. Jog ±1°, home, Stop mid-move, E-stop. The hardware E-stop must remove driver power (`rp2040.md` §6).
+- **Only after everything passes:** motors at low current, no load. Jog ±1°, home, Stop mid-move, E-stop. The hardware E-stop must remove driver power (`rp2040.md` section 6).
 
 ## 7. Recording
 
@@ -111,6 +111,6 @@ Copy [`rp2040-record-template.md`](rp2040-record-template.md) to `docs/validatio
 - **Fail honestly:** a test that doesn't pass gets a new issue, linked from the record. Don't adjust the pass criterion after the fact.
 - **Then:**
   - commit the filled record;
-  - summarise the results in `rp2040.md` §9 (replacing "None of the following has been carried out yet");
+  - summarise the results in `rp2040.md` section 9 (replacing "None of the following has been carried out yet");
   - move each issue to **Done**;
   - set the changelog validation level to *hardware-validated* only for what was measured.

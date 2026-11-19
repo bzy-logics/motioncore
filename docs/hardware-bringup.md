@@ -49,4 +49,4 @@ order; do not skip the no-load steps.
 7. Motor connected, **no load**, current limit low: jog ±1°, home, stop mid-move, E-stop.
 8. Record measured limits in `robot-profiles/single-axis-stm32f411.toml`.
 
-Performance limits must be measured, not assumed (spec §12).
+Performance limits must be measured, not assumed (spec section 12).

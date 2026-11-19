@@ -42,4 +42,4 @@ direction, for example on the six-axis RP2040 bench profile after homing:
 motioncore movej j1=0 j2=0 j3=-35 j4=60 j5=-10 j6=90
 ```
 
-See `docs/rp2040.md` §9 (test 15) for the full procedure.
+See [RP2040 hardware validation, test 15](../../docs/rp2040.md#91-coordinated-move-skew-test-15) for the full procedure.

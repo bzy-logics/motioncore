@@ -1,6 +1,6 @@
 # RP2040 validation record: YYYY-MM-DD
 
-Copy this file to `docs/validation/rp2040-YYYY-MM-DD.md` and fill it in. Procedure: [`rp2040-bench-session.md`](rp2040-bench-session.md); test definitions and pass criteria: [`docs/rp2040.md`](../rp2040.md) §9.
+Copy this file to `docs/validation/rp2040-YYYY-MM-DD.md` and fill it in. Procedure: [`rp2040-bench-session.md`](rp2040-bench-session.md); test definitions and pass criteria: [`docs/rp2040.md`](../rp2040.md) section 9.
 
 ## Setup
 
@@ -24,7 +24,7 @@ Copy this file to `docs/validation/rp2040-YYYY-MM-DD.md` and fill it in. Procedu
 
 Result: **pass**, **fail** (link the new issue) or **not run** (why).
 
-| # | Test | Build | Measured | Pass criterion (`rp2040.md` §9) | Result | Capture |
+| # | Test | Build | Measured | Pass criterion (`rp2040.md` section 9) | Result | Capture |
 |---|---|---|---|---|---|---|
 | 1 | Safe start | A | ENABLE level: no firmware / BOOTSEL / flashing / running | All ENABLE lines high throughout | | |
 | 2 | Identity | A | board, build hash from `firmware verify` | `rp2040-pico`, hash matches | | |
@@ -33,7 +33,7 @@ Result: **pass**, **fail** (link the new issue) or **not run** (why).
 | 5 | DIR setup / hold | A | DIR edge → next STEP rise; last STEP fall → DIR edge, µs | ≥ 2.0 / ≥ 2.2 µs | | |
 | 6 | Frequency accuracy | A | edges in 1 s at 1 / 10 / 50 kHz; total steps vs commanded | within 0.1 %; exact total | | |
 | 7 | Jitter | B | STEP period histogram at constant velocity: min, max, spread | spread ≤ one 200 µs window effect; no period below minimum | | |
-| 8 | Max sustainable rate | A | highest rate without `StepRateExceeded` (≤ 50 kHz via engine, see session §5) | record; advertised ≤ 50 % of it | | |
+| 8 | Max sustainable rate | A | highest rate without `StepRateExceeded` (≤ 50 kHz via engine, see session section 5) | record; advertised ≤ 50 % of it | | |
 | 9 | Six axes simultaneously | B | six channels at 50 kHz: fault? max ISR time (GP28 high) µs | no fault; ISR < 100 µs | | |
 | 10 | Stop latency | A | `estop`: frame receipt → last STEP edge; → ENABLE high, ms | both within 1 ms | | |
 | 11 | Watchdog | A | USB unplug → ENABLE high, ms | ≤ 500 ms | | |
@@ -57,4 +57,4 @@ Result: **pass**, **fail** (link the new issue) or **not run** (why).
 
 - [ ] Every row has a result and a capture.
 - [ ] Failures are filed and linked.
-- [ ] `rp2040.md` §9 summary updated; issues moved to Done; changelog validation levels updated for what was measured.
+- [ ] `rp2040.md` section 9 summary updated; issues moved to Done; changelog validation levels updated for what was measured.

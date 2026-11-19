@@ -11,7 +11,7 @@
 //! Trusted **builtin** plugins (see `plugins/builtin`) are compiled into the engine. Manifests
 //! with `kind = "wasm"` are fully parsed, validated and resolved, but
 //! activation reports that the Wasmtime runtime is not part of this build
-//! (an open design decision in the specification, §16).
+//! (an open design decision in the specification, section 16).
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
