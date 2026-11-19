@@ -27,6 +27,7 @@ __version__ = "0.1.0"
 
 DOWN = (0.0, 0.0, -1.0)  # tool points at the table
 POS_TOL = 0.05  # deg / mm: "arrived" tolerance on measured positions
+TOOL_TOL_MM = 0.5  # MoveL "arrived" tolerance on the tool point
 CMD_TOL = 0.01  # commanded position vs. target (step quantisation)
 MIN_MOVE = 0.02  # joint changes smaller than this are not sent
 BAD_STATES = {"faulted", "emergency_stopped", "disconnected"}
@@ -47,20 +48,22 @@ class Unreachable(Exception):
 class Robot:
     """Joint-space motion through ratavyr, waiting on live telemetry.
 
-    Uses a coordinated MoveJ command when the server has one (all joints
-    start and finish together on a straight joint-space path); otherwise
-    moves one joint at a time, in an order that the client-side collision
-    model says is clear. Either way the engine re-validates every command.
+    Joint moves use the coordinated `move_j` command (all joints start and
+    finish together on a straight joint-space path). Straight tool moves
+    (descend, lift) use `move_l`. A server without these commands gets one
+    joint at a time instead, in an order the client-side collision model
+    says is clear. Either way the engine re-validates every command.
     """
 
     def __init__(self, api: Api, tel: Telemetry, model: RobotModel, ids: list[str],
-                 speed: float, motion: str, movej_command: str, dry_run: bool):
+                 speed: float, motion: str, line_speed: float, dry_run: bool):
         self.api, self.tel, self.model = api, tel, model
         self.ids = ids  # model joint order -> axis ids
         self.speed = speed
-        self.movej = motion in ("auto", "movej")
         self.motion = motion
-        self.movej_command = movej_command
+        self.movej = motion in ("auto", "movej")
+        self.movel = motion == "auto"
+        self.line_speed = line_speed
         self.dry_run = dry_run
         self.dry_q: list[float] | None = None
 
@@ -138,24 +141,59 @@ class Robot:
 
     def _try_movej(self, q0: list[float], target: list[float], what: str) -> bool:
         """Coordinated move. Returns False (and stops trying) when the
-        server has no such command or its contract differs from this one."""
+        server has no move_j command (engine-api < 0.2)."""
         c = self.model.check_path(q0, target)
         if c is not None:
             raise Unreachable(f"{what}: straight joint path collides ({c.a} / {c.b}, gap {c.gap:.1f} mm)")
         self._require_ready()
         try:
-            self.api.command(self.movej_command, movej_params(self.ids, target))
+            self.api.command("move_j", movej_params(self.ids, target, self.speed))
         except ApiError as e:
-            if e.code == "unknown_command" or (e.code == "bad_request" and self.motion == "auto"):
-                log(f"  coordinated MoveJ unavailable ({e.code}: {e.message}); moving joints one at a time from now on")
+            if e.code == "unknown_command":
+                log(f"  coordinated MoveJ unavailable ({e.message}); moving joints one at a time from now on")
                 self.movej = False
                 return False
             raise
-        log(f"  {what}: coordinated MoveJ")
+        log(f"  {what}: MoveJ")
         slowest = max(self._duration(i, q0[i], target[i]) for i in range(len(target)))
         moved = [i for i in range(len(target)) if abs(target[i] - q0[i]) > MIN_MOVE]
         self._wait_at(target, moved, slowest + 10.0)
         return True
+
+    def line(self, target_q: list[float], tool_mm: tuple[float, float, float], what: str) -> None:
+        """Straight line of the tool point to `tool_mm`, orientation held
+        (MoveL). `target_q` is the IK solution for the end pose, used for a
+        joint move when the server has no move_l (engine-api < 0.3)."""
+        if self.dry_run or not self.movel:
+            return self.move(target_q, what)
+        t = self.tel.latest()
+        if t is None:
+            raise StaleTelemetry("no live telemetry")
+        if t.get("tool") is None:  # older engine, or not a serial chain
+            self.movel = False
+            return self.move(target_q, what)
+        start = t["tool"]["position_mm"]
+        self._require_ready()
+        try:
+            self.api.command("move_l", {"position_mm": [round(v, 3) for v in tool_mm],
+                                        "speed_mm_s": self.line_speed})
+        except ApiError as e:
+            if e.code == "unknown_command":
+                log(f"  MoveL unavailable ({e.message}); using joint moves from now on")
+                self.movel = False
+                return self.move(target_q, what)
+            raise
+        log(f"  {what}: MoveL")
+
+        def arrived(t):
+            # The tool starts far (tens of mm) from the target, so "ready"
+            # with the tool at the target can only be seen after this move.
+            self._check(t)
+            tool = t.get("tool")
+            return (t["state"] == "ready" and tool is not None
+                    and math.dist(tool["position_mm"], tool_mm) <= TOOL_TOL_MM
+                    and all(abs(a["velocity"]) < 1e-6 for a in t["axes"]))
+        self.tel.wait(arrived, math.dist(start, tool_mm) / self.line_speed + 10.0)
 
     def stop(self) -> None:
         try:
@@ -164,15 +202,9 @@ class Robot:
             log(f"stop failed: {e} -- use the hardware E-stop if the robot is moving")
 
 
-def movej_params(ids: list[str], target: list[float]) -> dict:
-    """Body of the coordinated MoveJ command.
-
-    MoveJ is being added in milestone v0.3 (coordinated motion); its REST
-    contract is not final. This is the only place to adapt once it is:
-    with --motion auto, a 404 unknown_command or 400 bad_request falls back
-    to single-joint moves, so a mismatch never moves the robot.
-    """
-    return {"targets": {i: round(v, 4) for i, v in zip(ids, target)}}
+def movej_params(ids: list[str], target: list[float], speed_scale: float) -> dict:
+    """Body of the move_j command (engine-api >= 0.2)."""
+    return {"targets": {i: round(v, 4) for i, v in zip(ids, target)}, "speed_scale": speed_scale}
 
 
 # ----------------------------------------------------------------- setup
@@ -230,8 +262,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-confidence", type=float, default=0.6)
     p.add_argument("--speed", type=float, default=0.5, help="fraction of each joint's max velocity (0-1]")
     p.add_argument("--motion", choices=("auto", "movej", "single"), default="auto",
-                   help="auto: coordinated MoveJ if the server has it, else one joint at a time")
-    p.add_argument("--movej-command", default="move-j", help="command name of the coordinated move")
+                   help="auto: MoveJ, and MoveL for descend/lift, when the server has them; "
+                        "movej: MoveJ only; single: one joint at a time")
+    p.add_argument("--line-speed", type=float, default=40.0, help="MoveL tool speed for descend/lift, mm/s")
     p.add_argument("--max-cycles", type=int, default=20)
     p.add_argument("--prepare", action="store_true", help="enable and home the robot if needed")
     p.add_argument("--yes", action="store_true", help="don't ask before enabling / homing")
@@ -241,6 +274,8 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
     if not 0 < a.speed <= 1:
         p.error("--speed must be in (0, 1]")
+    if not 0 < a.line_speed <= 2000:
+        p.error("--line-speed must be in (0, 2000]")
 
     rng = random.Random(a.seed)
     api = Api(a.url, a.token)
@@ -272,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         f"{'on' if model.collision_checking else 'off'}")
 
     tel = Telemetry(api, info["auth_required"], log)
-    robot = Robot(api, tel, model, ids, a.speed, a.motion, a.movej_command, a.dry_run)
+    robot = Robot(api, tel, model, ids, a.speed, a.motion, a.line_speed, a.dry_run)
     picked = missed = skipped = 0
     try:
         t = tel.wait(lambda t: True, 5.0)
@@ -332,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             try:
                 robot.move(above, "approach")
-                robot.move(grasp, "descend")
+                robot.line(grasp, (x, y, h), "descend")
             except (Unreachable, ApiError) as e:
                 if isinstance(e, ApiError) and e.code not in ("collision", "validation_failed", "not_homed"):
                     raise
@@ -345,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
             (tx, ty, tz), _ = model.tool(robot.q())
             obj = scene.object_at(tx, ty, tz, tol_xy=8.0, tol_z=5.0)
             log(f"  gripper close at ({tx:.1f}, {ty:.1f}, {tz:.1f}) -> {'got ' + obj.label if obj else 'nothing there'}")
-            robot.move(above, "lift")
+            robot.line(above, (x, y, h + 60.0), "lift")
             if obj is None:
                 missed += 1
                 failed_spots.append((x, y))

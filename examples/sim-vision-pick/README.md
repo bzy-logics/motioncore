@@ -73,28 +73,33 @@ A Python client sends no `Origin` header, so `MOTIONCORE_ALLOWED_ORIGINS` doesn'
 ## What a run looks like
 
 ```text
+ratavyr 0.3.0, engine 0.3.0 (API 0.3.0)
 robot dummy-arm: 6 joints, collision checking on
-scene (ground truth, hidden from the controller): cube@(148,-170), cylinder@(182,16), ...
-cycle 1: 4 detection(s) >= 0.5: cube 0.86, cylinder 0.75, cube 0.84, cylinder 0.97
-target cylinder (0.97) at (121.0, 135.5) mm, grasp height 40 mm
-  coordinated MoveJ unavailable (unknown_command: ...); moving joints one at a time from now on
-  approach: joints one at a time (j1 -> j2 -> j3 -> j5)
-  descend: joints one at a time (j2 -> j3 -> j5)
-  gripper close at (121.0, 135.5, 40.0) -> got cylinder
-  ...
-cycle 4: ... target cube (0.90) at (251.6, -63.8) mm
-  gripper close at (251.6, -63.9, 25.0) -> nothing there        <- 6 px of detector noise
+scene (ground truth, hidden from the controller): cube@(119,136), cylinder@(190,-2), ...
+  observe pose: MoveJ
 ...
-done: 5 picked, 1 missed grasps, 0 skipped, 0 left on the table
+cycle 4: 2 detection(s) >= 0.6: cube 0.81, cube 0.92
+target cube (0.92) at (190.0, -117.3) mm, grasp height 25 mm
+  approach: MoveJ
+  descend: MoveL
+  gripper close at (190.0, -117.3, 25.0) -> got cube
+  lift: MoveL
+  to bin: MoveJ
+  gripper open: cube placed
+  observe pose: MoveJ
+...
 ```
+
+With more detector noise (`--noise-px 6`), some grasps miss: `gripper close at ... -> nothing there`. The client lifts, looks again and retries.
 
 Each cycle:
 
 1. **Observe:** go to the observe pose and run the detector.
 2. **Choose a target:** take the most confident detection and turn its pixel position into table coordinates using the camera calibration.
-3. **Approach and descend:** solve IK for a point above the object, then for the grasp point, with the tool pointing down.
-4. **Grasp:** the simulated gripper closes. It only succeeds if the robot's measured pose, from telemetry, really is at an object.
-5. **Place:** lift, move to the bin and release.
+3. **Approach:** solve IK for a point 60 mm above the object with the tool pointing down, and go there with a coordinated MoveJ.
+4. **Descend:** a MoveL straight down to the grasp point, orientation held.
+5. **Grasp:** the simulated gripper closes. It only succeeds if the robot's measured pose, from telemetry, really is at an object.
+6. **Place:** a MoveL straight up, a MoveJ to the bin, and release.
 
 The controller never reads the scene's ground truth. It decides that the table is clear when three frames in a row show nothing new to pick.
 
@@ -111,8 +116,8 @@ The controller never reads the scene's ground truth. It decides that the table i
 | `--false-positives` | 0.15 | Chance of a phantom detection per frame |
 | `--min-confidence` | 0.6 | Ignore weaker detections |
 | `--speed` | 0.5 | Fraction of each joint's `max_velocity` |
-| `--motion` | `auto` | `auto`: MoveJ if the server has it, else one joint at a time. Also `movej` or `single` |
-| `--movej-command` | `move-j` | Command name of the coordinated move |
+| `--motion` | `auto` | `auto`: MoveJ, plus MoveL for descend and lift. `movej`: MoveJ only. `single`: one joint at a time |
+| `--line-speed` | 40 | MoveL tool speed for descend and lift, mm/s |
 | `--seed` | random | Reproducible scene and detector |
 | `--prepare` / `--yes` | off | Enable and home if needed / without asking |
 | `--dry-run` | off | Vision and planning only; sends no commands (a viewer token is enough) |
@@ -130,16 +135,18 @@ The controller never reads the scene's ground truth. It decides that the table i
   - On a fault or emergency stop it aborts at once, and it never resets faults itself: that is a person's decision, made in sindrava.
 - **The hardware E-stop is the real safety layer.** The client is just another operator.
 
-## Coordinated motion (MoveJ)
+## Motion commands
 
-Today the engine moves **one joint per command**. The client therefore orders single-joint moves so that every intermediate pose stays clear: it searches for an order in which each sweep passes the collision model, as the engine checks it.
+| Move | Command | Since |
+|---|---|---|
+| Observe, approach, to bin | `move_j` with `targets` and `speed_scale` (`--speed`): all joints start and finish together on a straight joint-space path | engine-api 0.2 (MotionCore 0.3.0) |
+| Descend, lift | `move_l` with `position_mm` and `speed_mm_s` (`--line-speed`): the tool point moves in a straight line, orientation held | engine-api 0.3 (MotionCore 0.3.0) |
 
-Coordinated MoveJ is being added in milestone **v0.3** (`POST /api/commands/move-j`). With `--motion auto`, the client tries it first:
-
-- **404 `unknown_command` or 400 `bad_request`:** it falls back to single-joint moves for the rest of the run. A missing or different contract never moves the robot.
-- **The command exists:** all joints start and finish together. Before sending it, the client checks the straight joint-space path against the collision model.
-
-The request body is built in one place, `movej_params()` in `sim_vision_pick.py`. When the v0.3 contract is final, adapt that function and its test.
+- **Before each `move_j`** the client checks the straight joint-space path against its collision model. The engine checks it again.
+- **A `move_l` is done** when telemetry shows the robot `ready` with `tool.position_mm` within 0.5 mm of the target.
+- **Older engines** answer `404 unknown_command`. The client then falls back for the rest of the run:
+  - joint moves for descend and lift;
+  - single-joint `move_to` commands, ordered so that every sweep passes the collision model as the engine checks it.
 
 ## Use a real detector
 
@@ -147,8 +154,7 @@ The request body is built in one place, `movej_params()` in `sim_vision_pick.py`
 
 ## Limits (inputs for the roadmap)
 
-- **Joints move one at a time** until MoveJ lands, so approach and descend are not straight lines.
-- **No Cartesian or IK API:** the client does its own IK.
+- **No IK API:** the client solves IK itself for the approach and bin poses. `move_l` solves the straight lines engine-side.
 - **No gripper or I/O in MotionCore:** the gripper is simulated in the client.
 - **Detections can't be shown in sindrava's 3D viewer:** that would need a scene-markers feature.
 - **It is not a plugin:** it uses the public API like any other client. A future out-of-process plugin could do the same once plugins can read telemetry and command motion.
@@ -166,4 +172,4 @@ They cover:
 - the order of single-joint moves;
 - the camera round trip;
 - the detector;
-- the MoveJ request body.
+- the `move_j` request body.
