@@ -90,14 +90,39 @@ arm with link radii and a home-all plan) for complete examples.
 
 With a `radius` on every axis, the engine models each link as capsules of
 that radius: from the joint to the joints mounted on it, and to its `tip`.
-Once **every** axis is homed, it checks each `move_to`, `jog` and `move_j`
-before starting it: the joints are swept from their current to their target
-positions along the move's straight joint-space path (every 0.5° or 1 mm of
-the joint that moves furthest), the others held still, and the move
-is refused with error `collision` when two links would come closer than
-2 mm, or a link (other than one standing on the base) would reach the floor
-(z = 0). A move that only increases the clearance is always allowed, so a
-robot already too close can back out.
+Once **every** axis is homed, it checks every move before starting it
+(`move_to`, `jog`, `move_j`, `move_j_path`, `move_l`) and refuses it with
+error `collision` when two links would come closer than 2 mm, or a link
+(other than one standing on the base) would reach the floor (z = 0).
+
+The check covers the whole planned path, not only the poses it evaluates.
+From the geometry, the engine bounds how fast each joint can move any point
+of each link (its distance from the joint's axis). From each checked pose it
+steps only as far as the remaining clearance above 2 mm allows, so no contact
+can hide between two checked poses: long steps far from other links, short
+ones near them. The planned path is the straight joint-space line of
+`move_to`, `jog` and `move_j`, the polyline through the inverse-kinematics
+samples of `move_l`, and the blended curve of `move_j_path` (checked as lines
+5 ms apart, widened by how far the curve can bow away from them). A path that
+cannot be shown to keep 2 mm within 0.01 mm is refused. The log line of an
+accepted move reports the certified clearance (`clearance >= 2.7 mm`).
+
+What this guarantees and what it does not:
+
+- It is a guarantee about the capsule model, not the machine: rigid links,
+  the profile's radii, nothing else in the cell. Choose radii that enclose
+  the real links, motors and cables, with room to spare.
+- It covers the planned joint path. The motors follow it within the MCU's
+  step tolerance (±1 step in simulation; not yet measured on hardware), and
+  `move_l` runs as 10 ms segments between path samples; these tracking errors
+  are a few hundredths of a millimetre on the desktop arm but are not part of
+  the guarantee.
+- It is a pre-move check, not a runtime monitor, and no substitute for
+  guarding or a hardware E-stop.
+
+A robot already closer than 2 mm (for example after a geometry change) may
+back out: a move is allowed if no gap that started below 2 mm dips more than
+0.1 mm below its start or ends smaller than it started.
 
 Links that touch by construction are not compared: a joint and the joint
 mounted on it, and joints connected only through zero-length links (such as

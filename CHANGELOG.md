@@ -20,6 +20,16 @@ All notable changes to MotionCore. Each capability is listed with its validation
 - `motioncore firmware rate-test`: the RP2040 test 8 step-rate sweep, talking to the MCU directly because the engine caps moves at the advertised rate. It refuses to run without `--no-motor-power` or while an engine is reachable (#114).
 - CI lints every bench feature on both boards and checks that the two features sharing a pin can't be built together (#114).
 
+### Changed — software-tested
+
+- The collision check is certified between the poses it evaluates (#77). It bounds how fast each joint can move any point of a link and steps only as far as the remaining clearance allows, so the 2 mm margin holds along the whole planned path of every move type, not only at samples. Steps are as long as before far from contact and shorter near it.
+  - MoveJPath checks the lines between its 5 ms samples widened by how far the blended curve can bow away from them.
+  - A path that can't be shown to keep the margin to within 0.01 mm is refused, with a message saying the links "could come within" the reported distance.
+  - Accepted moves log the certified clearance.
+  - A robot already closer than the margin may still back out, but no such gap may shrink by more than 0.1 mm or end smaller than it started. Before, any move that ended no worse than the start's overall minimum was allowed.
+  - Property test: accepted random paths, resampled every 0.01°, never come closer than the margin or the reported clearance.
+  - The guarantee is for the capsule model and the planned joint path, not for how closely the motors track it.
+
 ### Fixed — software-tested
 
 - MoveL was refused from a pose with a joint resting at its soft limit: the step-quantised position sits a fraction of a step outside (e.g. 180° at 213.333333 steps/° reads 180.00000028°), and the start point was checked against the limits too (#23).
@@ -92,7 +102,7 @@ The first MotionCore release, and the baseline that v0.4 (verified motion on har
 - Nothing is hardware-validated (#25, #26, #104).
 - Stop does not preserve the path (#102); no pause and resume (#29).
 - Position confidence has two levels only, homed and unhomed (#103).
-- The collision check samples the path (#77).
+- The collision check covers the robot's own links and the floor, not the rest of the cell; it is a pre-move check, not a runtime monitor.
 - The STM32F411 has one axis (#46) and no interlock input (#21).
 
 [0.3.0]: https://github.com/bzy-logics/motioncore/releases/tag/v0.3.0
