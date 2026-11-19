@@ -1,7 +1,7 @@
 //! The MotionCore engine: single authority for robot state.
 //!
 //! All state lives in [`Inner`] behind a `std::sync::Mutex` that is never held
-//! across an `.await`. Commands follow the motion pipeline of the spec (§7.1):
+//! across an `.await`. Commands follow the motion pipeline of the spec (section 7.1):
 //! check state/ownership → resolve geometry → plan → validate → convert to
 //! timestamped MCU segments → queue → observe feedback.
 

@@ -25,7 +25,7 @@ const fn jmp(addr: u8) -> u32 {
     addr as u32 & 0x1F
 }
 
-// Register bit positions (RP2040 datasheet §3.7).
+// Register bit positions (RP2040 datasheet section 3.7).
 const CTRL_SM_ENABLE: u32 = 0;
 const CTRL_SM_RESTART: u32 = 4;
 const CTRL_CLKDIV_RESTART: u32 = 8;

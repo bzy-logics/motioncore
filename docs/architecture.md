@@ -1,7 +1,7 @@
 # Architecture notes (v0.2)
 
 How the implementation maps onto [the specification](specification.md), and
-the open decisions (§16) settled so far — provisionally.
+the open decisions (section 16) settled so far — provisionally.
 
 ## Repositories and contracts
 
@@ -113,7 +113,7 @@ which build runs.
 Fault reset never resumes motion. The software E-stop **complements** a
 hardware E-stop circuit; it cannot replace one.
 
-## Decisions taken (spec §16)
+## Decisions taken (spec section 16)
 
 | Open decision | Choice | Revisit when |
 |---|---|---|

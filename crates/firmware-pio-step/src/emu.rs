@@ -3,7 +3,7 @@
 //! side-set bit; delays). It executes the *encoded* program words, so the
 //! tests check the instruction encoding as well as the timing arithmetic.
 //!
-//! Semantics follow the RP2040 datasheet §3.4: side-set is asserted when an
+//! Semantics follow the RP2040 datasheet section 3.4: side-set is asserted when an
 //! instruction starts (also while it stalls), delay cycles follow a completed
 //! instruction, `JMP X--`/`JMP Y--` test the register before decrementing,
 //! and a blocking PULL on an empty FIFO stalls without consuming cycles of
