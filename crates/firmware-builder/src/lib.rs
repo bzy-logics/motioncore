@@ -7,6 +7,11 @@
 //!   [`verify`] can prove which build is running.
 //! * Only in-repo board crates (`boards/*`) are compiled, with `cargo --locked`.
 //!   Nothing supplied by plugins or API clients is ever executed.
+//! * Bench test builds (`--bench <feature>`) enable one allow-listed Cargo
+//!   feature ([`motioncore_protocol::caps::BENCH_FEATURES`]). The feature is
+//!   part of the lockfile, so it changes the build hash, and the firmware
+//!   reports it as a capability, so [`verify`] shows a bench build. Bench
+//!   artifacts get their own directory (`<name>-<feature>`).
 //! * Flashing safety (drives off, operator confirmation) is enforced by the
 //!   callers that know the machine state: the engine and the CLI.
 //! * Each board declares how it is flashed ([`FlashMethod`]): an SWD probe
@@ -36,6 +41,10 @@ pub struct Lockfile {
     pub profile_sha256: String,
     pub required_capabilities: Vec<String>,
     pub protocol_version: u16,
+    /// Bench test feature compiled in (empty for production builds, and then
+    /// not written, so production build hashes are unchanged).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bench_features: Vec<String>,
 }
 
 /// `manifest.json` written next to a built image.
@@ -57,6 +66,9 @@ pub struct Manifest {
     pub uf2: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uf2_sha256: Option<String>,
+    /// Bench test feature compiled in; empty for production builds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bench_features: Vec<String>,
 }
 
 pub struct Configured {
@@ -89,9 +101,37 @@ pub fn reference_profile(root: &Path, id: &str) -> Result<PathBuf> {
     Ok(root.join("robot-profiles").join(name))
 }
 
-/// Artifact directory of a `--board` build.
-pub fn board_artifact_dir(root: &Path, id: &str) -> PathBuf {
-    root.join("build/firmware").join(id)
+/// Artifact directory of a `--board` build, or of its bench build.
+pub fn board_artifact_dir(root: &Path, id: &str, bench: Option<&str>) -> PathBuf {
+    root.join("build/firmware").join(artifact_name(id, bench))
+}
+
+fn artifact_name(base: &str, bench: Option<&str>) -> String {
+    match bench {
+        Some(f) => format!("{base}-{f}"),
+        None => base.to_string(),
+    }
+}
+
+/// Bench features the builder accepts.
+pub fn bench_features() -> impl Iterator<Item = &'static str> {
+    motioncore_protocol::caps::BENCH_FEATURES.iter().map(|(f, _)| *f)
+}
+
+/// Refuse anything but an allow-listed bench feature that the board crate
+/// declares.
+fn check_bench(root: &Path, target: &str, feature: &str) -> Result<()> {
+    if !bench_features().any(|f| f == feature) {
+        bail!("unknown bench feature '{feature}' (known: {})", bench_features().collect::<Vec<_>>().join(", "));
+    }
+    let manifest = root.join("boards").join(target).join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).with_context(|| format!("reading {}", manifest.display()))?;
+    let doc: toml::Table = toml::from_str(&text).with_context(|| format!("parsing {}", manifest.display()))?;
+    let declared = doc.get("features").and_then(|f| f.as_table()).is_some_and(|f| f.contains_key(feature));
+    if !declared {
+        bail!("board crate boards/{target} has no bench feature '{feature}'");
+    }
+    Ok(())
 }
 
 fn uf2_region(board: &Board) -> Result<uf2::FlashRegion> {
@@ -140,18 +180,22 @@ fn board_target(board: &Board) -> Result<(&'static str, &'static str)> {
 
 /// Resolve the configuration and write `build/firmware/<mcu>/motioncore.lock.toml`.
 pub fn configure(root: &Path, config: &Path, mcu: Option<&str>) -> Result<Configured> {
-    configure_in(root, config, mcu, None)
+    configure_in(root, config, mcu, None, None)
 }
 
 /// [`configure`] with an explicit artifact directory name (default: the MCU
-/// name). `--board` builds use the board id so boards never share a directory.
-pub fn configure_in(root: &Path, config: &Path, mcu: Option<&str>, dir_name: Option<&str>) -> Result<Configured> {
+/// name) and an optional bench feature (directory `<name>-<feature>`).
+/// `--board` builds use the board id so boards never share a directory.
+pub fn configure_in(root: &Path, config: &Path, mcu: Option<&str>, dir_name: Option<&str>, bench: Option<&str>) -> Result<Configured> {
     let text = std::fs::read(config).with_context(|| format!("reading {}", config.display()))?;
     let robot = motioncore_device_graph::load(config)?;
     let m = select_mcu(&robot, mcu)?;
     let (target, rust_target) = board_target(m.board)?;
     if !root.join("boards").join(target).join("Cargo.toml").is_file() {
         bail!("board crate boards/{target} not found");
+    }
+    if let Some(f) = bench {
+        check_bench(root, target, f)?;
     }
     let mut caps: Vec<String> = m.required_firmware_capabilities.iter().map(|s| s.to_string()).collect();
     caps.sort();
@@ -165,10 +209,11 @@ pub fn configure_in(root: &Path, config: &Path, mcu: Option<&str>, dir_name: Opt
         profile_sha256: sha256_hex(&text),
         required_capabilities: caps,
         protocol_version: motioncore_protocol::PROTOCOL_VERSION,
+        bench_features: bench.map(|f| vec![f.to_string()]).unwrap_or_default(),
     };
     let lock_text = toml::to_string_pretty(&lock)?;
     let build_hash = sha256_hex(lock_text.as_bytes())[..8].to_string();
-    let dir = root.join("build/firmware").join(dir_name.unwrap_or(&m.name));
+    let dir = root.join("build/firmware").join(artifact_name(dir_name.unwrap_or(&m.name), bench));
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("motioncore.lock.toml"), &lock_text)?;
     Ok(Configured { mcu: m.name.clone(), dir, lock, build_hash })
@@ -272,24 +317,41 @@ impl CappedLog {
 /// Configure and compile. Writes `firmware.elf`, `manifest.json` and
 /// `build.log` (plus `firmware.uf2` for UF2 boards).
 pub fn build(root: &Path, config: &Path, mcu: Option<&str>, log: &mut dyn FnMut(&str)) -> Result<(Configured, Manifest)> {
-    build_in(root, config, mcu, None, log)
+    build_bench(root, config, mcu, None, log)
 }
 
-/// Build the board's reference profile into `build/firmware/<board>/`.
-pub fn build_board(root: &Path, id: &str, log: &mut dyn FnMut(&str)) -> Result<(Configured, Manifest)> {
+/// [`build`], optionally as a bench test build with one bench feature.
+pub fn build_bench(root: &Path, config: &Path, mcu: Option<&str>, bench: Option<&str>, log: &mut dyn FnMut(&str)) -> Result<(Configured, Manifest)> {
+    build_in(root, config, mcu, None, bench, log)
+}
+
+/// Build the board's reference profile into `build/firmware/<board>/`
+/// (bench builds: `build/firmware/<board>-<feature>/`).
+pub fn build_board(root: &Path, id: &str, bench: Option<&str>, log: &mut dyn FnMut(&str)) -> Result<(Configured, Manifest)> {
     let profile = reference_profile(root, id)?;
     log(&format!("using reference profile {}", profile.display()));
-    build_in(root, &profile, None, Some(id), log)
+    build_in(root, &profile, None, Some(id), bench, log)
 }
 
-fn build_in(root: &Path, config: &Path, mcu: Option<&str>, dir_name: Option<&str>, log: &mut dyn FnMut(&str)) -> Result<(Configured, Manifest)> {
-    let c = configure_in(root, config, mcu, dir_name)?;
+fn build_in(
+    root: &Path,
+    config: &Path,
+    mcu: Option<&str>,
+    dir_name: Option<&str>,
+    bench: Option<&str>,
+    log: &mut dyn FnMut(&str),
+) -> Result<(Configured, Manifest)> {
+    let c = configure_in(root, config, mcu, dir_name, bench)?;
     let package = format!("motioncore-board-{}", c.lock.firmware_target);
     log(&format!("building {package} for {} ({}) with build hash {}", c.lock.board, c.lock.rust_target, c.build_hash));
     let mut cmd = Command::new("cargo");
     cmd.args(["build", "--locked", "-p", &package, "--profile", "firmware", "--target", &c.lock.rust_target])
         .current_dir(root)
         .env("MOTIONCORE_BUILD_HASH", &c.build_hash);
+    if let Some(f) = bench {
+        log(&format!("BENCH TEST BUILD with feature '{f}': for bench measurements only, never for production"));
+        cmd.args(["--features", f]);
+    }
     let mut file_log = CappedLog { file: std::fs::File::create(c.dir.join("build.log"))?, written: 0, truncated: false };
     let ok = run_logged(cmd, BUILD_TIMEOUT, &mut |l| {
         file_log.line(l);
@@ -328,6 +390,7 @@ fn build_in(root: &Path, config: &Path, mcu: Option<&str>, dir_name: Option<&str
         built_unix: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),
         uf2,
         uf2_sha256,
+        bench_features: c.lock.bench_features.clone(),
     };
     std::fs::write(c.dir.join("manifest.json"), serde_json::to_string_pretty(&manifest)?)?;
     log(&format!("ok: {} ({} bytes, sha256 {})", c.dir.join("firmware.elf").display(), image.len(), &manifest.image_sha256[..16]));
@@ -482,6 +545,8 @@ pub struct VerifyReport {
     pub firmware_version: String,
     pub build_hash: String,
     pub capabilities: Vec<String>,
+    /// Bench test features the running firmware reports (empty: production).
+    pub bench_features: Vec<String>,
     pub problems: Vec<String>,
 }
 
@@ -506,14 +571,24 @@ pub async fn verify(dir: &Path, device: &str) -> Result<VerifyReport> {
             problems.push(format!("missing capability {c}"));
         }
     }
+    let bench_features: Vec<String> = motioncore_protocol::caps::bench_features(id.capabilities).map(String::from).collect();
+    problems.extend(bench_mismatch(&bench_features, &m.bench_features));
     Ok(VerifyReport {
         target: id.target.to_string(),
         board: id.board.to_string(),
         firmware_version: format!("{}.{}.{}", id.firmware_version.0, id.firmware_version.1, id.firmware_version.2),
         build_hash,
         capabilities,
+        bench_features,
         problems,
     })
+}
+
+/// Bench features reported by the MCU that the artifact does not have, or
+/// the other way round.
+fn bench_mismatch(running: &[String], artifact: &[String]) -> Option<String> {
+    let fmt = |v: &[String]| if v.is_empty() { "none (production)".to_string() } else { v.join(", ") };
+    (running != artifact).then(|| format!("bench features {} != artifact {}", fmt(running), fmt(artifact)))
 }
 
 #[derive(Debug)]
@@ -537,6 +612,7 @@ pub fn list_ports() -> Result<Vec<PortInfo>> {
         .collect())
 }
 
+pub mod bench;
 pub mod uf2;
 
 #[cfg(test)]
@@ -585,6 +661,7 @@ mod tests {
             built_unix: 0,
             uf2: None,
             uf2_sha256: None,
+            bench_features: vec![],
         };
         std::fs::write(dir.join("manifest.json"), serde_json::to_string(&m).unwrap()).unwrap();
         assert!(load_artifact(&dir).is_ok());
@@ -639,11 +716,48 @@ mod board_tests {
         let r = root();
         for (id, target, rust) in [("rp2040-pico", "rp2040", "thumbv6m-none-eabi"), ("stm32f411-blackpill", "stm32f4", "thumbv7em-none-eabihf")] {
             let profile = reference_profile(&r, id).unwrap();
-            let c = configure_in(&r, &profile, None, Some(id)).unwrap();
-            assert_eq!(c.dir, board_artifact_dir(&r, id));
+            let c = configure_in(&r, &profile, None, Some(id), None).unwrap();
+            assert_eq!(c.dir, board_artifact_dir(&r, id, None));
             assert_eq!((c.lock.board.as_str(), c.lock.firmware_target.as_str(), c.lock.rust_target.as_str()), (id, target, rust));
             assert!(c.lock.required_capabilities.contains(&"stepper.step_dir".to_string()));
         }
+    }
+
+    #[test]
+    fn bench_builds_are_allow_listed_and_change_the_build_hash() {
+        let r = root();
+        for id in ["rp2040-pico", "stm32f411-blackpill"] {
+            let profile = reference_profile(&r, id).unwrap();
+            let release = configure_in(&r, &profile, None, Some(id), None).unwrap();
+            // Production lockfiles carry no bench field, so their hash is
+            // what it was before bench builds existed.
+            assert!(!toml::to_string_pretty(&release.lock).unwrap().contains("bench"));
+            let mut hashes = vec![release.build_hash.clone()];
+            for f in ["bench-panic", "bench-isr-probe"] {
+                let c = configure_in(&r, &profile, None, Some(id), Some(f)).unwrap();
+                assert_eq!(c.lock.bench_features, [f]);
+                assert_eq!(c.dir, board_artifact_dir(&r, id, Some(f)));
+                assert_ne!(c.dir, release.dir, "a bench build must not overwrite the production artifact");
+                hashes.push(c.build_hash.clone());
+            }
+            hashes.sort();
+            hashes.dedup();
+            assert_eq!(hashes.len(), 3, "{id}: every build variant has its own hash");
+            for bad in ["bench-rocket", "std", "bench-panic,bench-isr-probe"] {
+                let err = configure_in(&r, &profile, None, Some(id), Some(bad)).err().unwrap().to_string();
+                assert!(err.contains("unknown bench feature"), "{bad}: {err}");
+            }
+        }
+    }
+
+    #[test]
+    fn verify_flags_bench_feature_mismatch() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(bench_mismatch(&s(&[]), &s(&[])), None);
+        assert_eq!(bench_mismatch(&s(&["bench-panic"]), &s(&["bench-panic"])), None);
+        let m = bench_mismatch(&s(&["bench-panic"]), &s(&[])).unwrap();
+        assert!(m.contains("bench-panic") && m.contains("none (production)"), "{m}");
+        assert!(bench_mismatch(&s(&[]), &s(&["bench-isr-probe"])).is_some());
     }
 
     fn uf2_artifact(dir: &Path) -> Manifest {
@@ -677,6 +791,7 @@ mod board_tests {
             built_unix: 0,
             uf2: Some("firmware.uf2".into()),
             uf2_sha256: Some(sha256_hex(&uf2)),
+            bench_features: vec![],
         };
         std::fs::write(dir.join("manifest.json"), serde_json::to_string(&m).unwrap()).unwrap();
         m

@@ -14,9 +14,15 @@ test = false
 bench = false
 
 [features]
-# Bench test of the panic safe state: a spare input tied to GND makes the
-# firmware panic in the next motion tick. Never enable in production builds.
+# Bench test builds, made with `motioncore firmware build --bench <feature>`.
+# Never enable them in production firmware. Both use PB1: one at a time.
+#
+# Panic safe state: PB1 tied to GND makes the firmware panic in the next
+# motion tick.
 bench-panic = []
+# Tick-interrupt timing: PB1 is high while the motion tick interrupt runs,
+# for a logic analyser.
+bench-isr-probe = []
 
 [dependencies]
 motioncore-firmware-core = { workspace = true }

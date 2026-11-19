@@ -19,8 +19,17 @@ pub mod caps {
     pub const GPIO_OUTPUT: u32 = 1 << 5;
     pub const SERVO_PWM: u32 = 1 << 6;
 
+    /// Bench test build: a spare input tied to GND makes the firmware panic
+    /// (Cargo feature `bench-panic`). Never in production firmware.
+    pub const BENCH_PANIC: u32 = 1 << 24;
+    /// Bench test build: a spare output is high while the motion tick
+    /// interrupt runs (Cargo feature `bench-isr-probe`).
+    pub const BENCH_ISR_PROBE: u32 = 1 << 25;
+    /// Every bench-build bit. A firmware reporting any of them is a test build.
+    pub const BENCH_MASK: u32 = BENCH_PANIC | BENCH_ISR_PROBE;
+
     /// Human-readable capability names.
-    pub const NAMES: [(u32, &str); 7] = [
+    pub const NAMES: [(u32, &str); 9] = [
         (STEPPER_STEP_DIR, "stepper.step_dir"),
         (ENDSTOP, "endstop"),
         (WATCHDOG, "watchdog"),
@@ -28,7 +37,18 @@ pub mod caps {
         (GPIO_INPUT, "gpio.input"),
         (GPIO_OUTPUT, "gpio.output"),
         (SERVO_PWM, "servo.pwm"),
+        (BENCH_PANIC, "bench.panic"),
+        (BENCH_ISR_PROBE, "bench.isr_probe"),
     ];
+
+    /// Cargo feature of a bench build and the capability bit its firmware
+    /// reports.
+    pub const BENCH_FEATURES: [(&str, u32); 2] = [("bench-panic", BENCH_PANIC), ("bench-isr-probe", BENCH_ISR_PROBE)];
+
+    /// The bench features a capability mask reports.
+    pub fn bench_features(mask: u32) -> impl Iterator<Item = &'static str> {
+        BENCH_FEATURES.iter().filter(move |(_, bit)| mask & bit != 0).map(|(f, _)| *f)
+    }
 
     /// Look up a capability bit by its name.
     pub fn from_name(name: &str) -> Option<u32> {

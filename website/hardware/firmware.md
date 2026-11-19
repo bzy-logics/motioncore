@@ -33,6 +33,41 @@ motioncore firmware build --board rp2040-pico
 
 Use `--mcu NAME` with `--config` to choose the MCU when the profile defines more than one.
 
+### Bench test builds
+
+Hardware validation needs two test builds. Both use one spare pin (GP28 on the RP2040, PB1 on the STM32F411), so build one at a time:
+
+| `--bench` | What the spare pin does | Used for |
+|---|---|---|
+| `bench-isr-probe` | output, high while the motion tick interrupt runs | interrupt time and period |
+| `bench-panic` | input; tied to GND, the firmware panics in the next tick | the panic safe state |
+
+```bash
+motioncore firmware build --board rp2040-pico --bench bench-isr-probe
+# artifacts in build/firmware/rp2040-pico-bench-isr-probe/
+motioncore firmware flash --board rp2040-pico --bench bench-isr-probe --yes
+motioncore firmware verify --board rp2040-pico --bench bench-isr-probe --device COM5
+```
+
+- **Build hash:** the feature is part of the lockfile, so each bench build has its own build hash.
+- **Identity:** the firmware reports the feature as a capability (`bench.isr_probe`, `bench.panic`).
+- **Warnings:** `verify` prints the build type, and the engine logs a warning when it connects to a bench build.
+
+Never leave a bench build on a machine that drives motors: reflash the production build afterwards.
+
+### Step-rate test
+
+The engine caps every move at the board's advertised step rate, so it can't measure the firmware's real limit. `firmware rate-test` talks to the MCU directly, without the engine:
+- it enables the drivers;
+- it runs all channels through rising rate stages (by default 10 to 250 kHz in 10 kHz steps, 1 s each);
+- it stops at the first fault, or at the first stage that ends at the wrong step count.
+
+```bash
+motioncore firmware rate-test --device COM5 --no-motor-power
+```
+
+It needs the interlock input closed and refuses to run without `--no-motor-power` or while an engine is reachable. **The motor supply must be off.**
+
 A build writes:
 
 | File | Contents |
@@ -83,10 +118,11 @@ motioncore firmware verify --artifact build/firmware/main --device /dev/ttyACM0
 motioncore firmware verify --board rp2040-pico --device COM5        # Windows
 ```
 
-It connects to the MCU, reads its identity, and compares board, build hash and capabilities with the artifact's manifest. Any mismatch is printed as `MISMATCH: …` and the command fails. Example of a successful run:
+It connects to the MCU, reads its identity, and compares board, build hash, capabilities and bench features with the artifact's manifest. Any mismatch is printed as `MISMATCH: …` and the command fails. Example of a successful run:
 
 ```text
-MCU reports: target rp2040 board rp2040-pico fw 0.1.0 build dcdfcb82 caps [stepper.step_dir, endstop, watchdog]
+MCU reports: target rp2040 board rp2040-pico fw 0.3.0 build dcdfcb82 caps [stepper.step_dir, endstop, watchdog]
+build type: production
 verified: running firmware matches build/firmware/rp2040-pico
 ```
 

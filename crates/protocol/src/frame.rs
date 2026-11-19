@@ -209,4 +209,13 @@ mod tests {
         assert_eq!(names, ["stepper.step_dir", "watchdog"]);
         assert_eq!(caps::from_name("endstop"), Some(caps::ENDSTOP));
     }
+
+    #[test]
+    fn bench_bits_name_their_cargo_feature() {
+        let mask = caps::STEPPER_STEP_DIR | caps::BENCH_ISR_PROBE;
+        assert_eq!(caps::bench_features(mask).collect::<std::vec::Vec<_>>(), ["bench-isr-probe"]);
+        assert_eq!(caps::bench_features(caps::STEPPER_STEP_DIR).count(), 0);
+        assert_eq!(caps::BENCH_FEATURES.iter().fold(0, |m, (_, b)| m | b), caps::BENCH_MASK);
+        assert!(capability_names(caps::BENCH_PANIC).eq(["bench.panic"]));
+    }
 }

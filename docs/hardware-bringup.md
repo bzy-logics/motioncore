@@ -30,10 +30,10 @@ order; do not skip the no-load steps.
    during flashing; EN low only after `enable`.
 3. Unplug USB while enabled → EN must go high within the watchdog timeout (500 ms).
 4. Stall the firmware (debugger halt) → IWDG reset within ~100 ms → EN high.
-5. Panic safe state: build with `--features bench-panic` (test builds only); during a move tie PB1 to GND →
+5. Panic safe state: build, flash and verify with `--bench bench-panic` (test build only); during a move tie PB1 to GND →
    EN high and STEP stopped within 50 µs, then IWDG reset after ~100 ms.
-6. Step timing (logic analyser on STEP, DIR and a spare GPIO toggled in the
-   `TIM3` interrupt):
+6. Step timing (logic analyser on STEP, DIR and PB1, on a `--bench
+   bench-isr-probe` build: PB1 is high while the `TIM3` interrupt runs):
    - STEP high **and** low time ≥ 2 µs at 1, 5, 10 and 20 kHz, including the
      back-to-back steps of a tick that emits more than one step. Compare with
      the driver datasheet minimums and DIR setup time.

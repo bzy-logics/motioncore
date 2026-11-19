@@ -187,6 +187,11 @@ enum FirmwareCmd {
         board: Option<String>,
         #[arg(long, requires = "config")]
         mcu: Option<String>,
+        /// Bench test build with this feature (`bench-panic` or
+        /// `bench-isr-probe`); artifacts in a separate `<name>-<feature>`
+        /// directory. Never for production.
+        #[arg(long)]
+        bench: Option<String>,
     },
     /// Flash a built artifact with the board's method: probe-rs (STM32F411)
     /// or UF2 to the BOOTSEL drive (RP2040). Drives must be off.
@@ -196,6 +201,9 @@ enum FirmwareCmd {
         /// Use the artifact of `firmware build --board <id>`.
         #[arg(long)]
         board: Option<String>,
+        /// With `--board`: the artifact of `firmware build --board <id> --bench <feature>`.
+        #[arg(long, requires = "board")]
+        bench: Option<String>,
         /// Mount point of the UF2 bootloader drive (default: auto-detect).
         #[arg(long)]
         uf2_volume: Option<PathBuf>,
@@ -209,8 +217,37 @@ enum FirmwareCmd {
         artifact: Option<PathBuf>,
         #[arg(long)]
         board: Option<String>,
+        /// With `--board`: the artifact of `firmware build --board <id> --bench <feature>`.
+        #[arg(long, requires = "board")]
+        bench: Option<String>,
         #[arg(long)]
         device: String,
+    },
+    /// Bench test: raise the step rate stage by stage until the firmware
+    /// faults, talking to the MCU directly (the engine caps moves at the
+    /// board's advertised rate). Drivers must have NO motor power. Stop the
+    /// engine first.
+    RateTest {
+        #[arg(long)]
+        device: String,
+        /// Channels to drive together, e.g. `0,1,2,3,4,5` (default: all).
+        #[arg(long, value_delimiter = ',')]
+        axes: Option<Vec<u8>>,
+        /// First stage rate (steps/s).
+        #[arg(long, default_value_t = 10_000.0)]
+        from: f32,
+        /// Last stage rate (steps/s).
+        #[arg(long, default_value_t = 250_000.0)]
+        to: f32,
+        /// Increment between stages (steps/s).
+        #[arg(long, default_value_t = 10_000.0)]
+        step: f32,
+        /// Time at each stage rate (ms).
+        #[arg(long, default_value_t = 1000)]
+        hold_ms: u64,
+        /// Confirm that the drivers have no motor power (or no motors).
+        #[arg(long)]
+        no_motor_power: bool,
     },
 }
 
@@ -380,13 +417,14 @@ async fn start(config: &Path, listen: &str, plugin_dir: Option<&Path>, repo: Opt
     grpc::serve(engine, jobs, addr, shutdown).await
 }
 
-/// `--artifact <dir>` or the directory of a `--board` build.
-fn artifact_dir(artifact: Option<PathBuf>, board: Option<String>) -> Result<PathBuf> {
+/// `--artifact <dir>` or the directory of a `--board` build (with `--bench`,
+/// of that bench build).
+fn artifact_dir(artifact: Option<PathBuf>, board: Option<String>, bench: Option<String>) -> Result<PathBuf> {
     match (artifact, board) {
         (Some(a), _) => Ok(a),
         (None, Some(b)) => {
             builder::board(&b)?;
-            Ok(builder::board_artifact_dir(&builder::find_repo_root(&std::env::current_dir()?)?, &b))
+            Ok(builder::board_artifact_dir(&builder::find_repo_root(&std::env::current_dir()?)?, &b, bench.as_deref()))
         }
         (None, None) => bail!("--artifact or --board is required"),
     }
@@ -423,17 +461,17 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
             println!("{}", toml::to_string_pretty(&c.lock)?);
             Ok(())
         }
-        FirmwareCmd::Build { config, board, mcu } => {
+        FirmwareCmd::Build { config, board, mcu, bench } => {
             let root = root()?;
             match (config, board) {
-                (Some(config), _) => builder::build(&root, &config, mcu.as_deref(), &mut |l| println!("{l}"))?,
-                (None, Some(board)) => builder::build_board(&root, &board, &mut |l| println!("{l}"))?,
+                (Some(config), _) => builder::build_bench(&root, &config, mcu.as_deref(), bench.as_deref(), &mut |l| println!("{l}"))?,
+                (None, Some(board)) => builder::build_board(&root, &board, bench.as_deref(), &mut |l| println!("{l}"))?,
                 (None, None) => unreachable!("clap requires --config or --board"),
             };
             Ok(())
         }
-        FirmwareCmd::Flash { artifact, board, uf2_volume, yes } => {
-            let artifact = artifact_dir(artifact, board)?;
+        FirmwareCmd::Flash { artifact, board, bench, uf2_volume, yes } => {
+            let artifact = artifact_dir(artifact, board, bench)?;
             let m = builder::load_artifact(&artifact)?;
             // Refuse while a reachable engine reports energised drives.
             match client::connect(engine_addr).await {
@@ -447,6 +485,9 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
                 Err(_) => println!("engine not reachable at {engine_addr}; make sure drives are powered off"),
             }
             println!("about to flash {} (build {}, fw {}) for {}", m.image, m.build_hash, m.firmware_version, m.board);
+            if !m.bench_features.is_empty() {
+                println!("BENCH TEST BUILD ({}): for bench measurements only, never for production", m.bench_features.join(", "));
+            }
             if !yes {
                 bail!("refusing to flash without operator confirmation: re-run with --yes once drives are powered off");
             }
@@ -454,8 +495,8 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
             builder::flash_with(&artifact, &opts, &mut |l| println!("{l}"))?;
             Ok(())
         }
-        FirmwareCmd::Verify { artifact, board, device } => {
-            let artifact = artifact_dir(artifact, board)?;
+        FirmwareCmd::Verify { artifact, board, bench, device } => {
+            let artifact = artifact_dir(artifact, board, bench)?;
             let r = builder::verify(&artifact, &device).await?;
             println!(
                 "MCU reports: target {} board {} fw {} build {} caps [{}]",
@@ -465,6 +506,11 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
                 r.build_hash,
                 r.capabilities.join(", ")
             );
+            if r.bench_features.is_empty() {
+                println!("build type: production");
+            } else {
+                println!("build type: BENCH TEST BUILD ({}), never for production", r.bench_features.join(", "));
+            }
             if r.problems.is_empty() {
                 println!("verified: running firmware matches {}", artifact.display());
                 Ok(())
@@ -474,6 +520,31 @@ async fn firmware(cmd: FirmwareCmd, engine_addr: &str) -> Result<()> {
                 }
                 bail!("verification failed")
             }
+        }
+        FirmwareCmd::RateTest { device, axes, from, to, step, hold_ms, no_motor_power } => {
+            if !no_motor_power {
+                bail!(
+                    "the rate test enables the drivers and steps far above any usable speed: \
+                     remove motor power (or disconnect the motors), then re-run with --no-motor-power"
+                );
+            }
+            if client::connect(engine_addr).await.is_ok() {
+                bail!("an engine is running at {engine_addr}: stop it first, the rate test talks to the MCU directly");
+            }
+            let o = builder::bench::RateTestOptions { axes, from, to, step, hold: std::time::Duration::from_millis(hold_ms), ..Default::default() };
+            let r = builder::bench::rate_test_serial(&device, &o, &mut |l| println!("{l}")).await?;
+            let max = r.max_sustained();
+            if r.limit_not_reached() {
+                println!("no fault up to {max:.0} steps/s on channels {:?}: the limit is above that; raise --to", r.axes);
+            } else {
+                println!("max sustained step rate: {max:.0} steps/s on channels {:?}", r.axes);
+            }
+            if let Ok(b) = builder::board(&r.board) {
+                let advertised = b.max_step_rate as f32;
+                let verdict = if advertised <= 0.5 * max { "pass" } else { "FAIL (or not measured high enough)" };
+                println!("advertised limit {advertised:.0} steps/s must be <= 50 % of the measured rate: {verdict}");
+            }
+            Ok(())
         }
     }
 }

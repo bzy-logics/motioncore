@@ -15,9 +15,11 @@
 //! the E-stop chain's monitoring contact; open = unsafe. GP25 (on-board LED)
 //! is lit while any drive is enabled.
 //!
-//! GP28 (feature `bench-panic` only): pull-up input; tying it to GND makes
-//! the firmware panic in the next motion tick, to measure the panic safe
-//! state on the bench. Never enable this feature in production firmware.
+//! GP28 is used by bench test builds only, never in production firmware:
+//! * feature `bench-panic`: pull-up input; tying it to GND makes the firmware
+//!   panic in the next motion tick, to measure the panic safe state;
+//! * feature `bench-isr-probe`: output, high while `TIMER_IRQ_0` runs, to
+//!   measure the motion tick's interrupt time and period.
 //!
 //! RP2040 I/O is 3.3 V and **not** 5 V tolerant. Drivers need 3.3 V-compatible
 //! logic inputs (or level shifters), and every ENABLE line needs an external
@@ -32,7 +34,15 @@ use rp2040_hal::gpio::{DynPinId, FunctionPio0, FunctionPio1, FunctionSioInput, F
 use crate::pio::{load_program, StepSm};
 
 pub const AXES: usize = 6;
-pub const CAPABILITIES: u32 = caps::STEPPER_STEP_DIR | caps::ENDSTOP | caps::WATCHDOG;
+pub const CAPABILITIES: u32 = caps::STEPPER_STEP_DIR | caps::ENDSTOP | caps::WATCHDOG | BENCH_CAPABILITIES;
+
+#[cfg(all(feature = "bench-panic", feature = "bench-isr-probe"))]
+compile_error!("features `bench-panic` and `bench-isr-probe` both use GP28; build one at a time");
+
+/// Reported at handshake so `firmware verify` and the engine can tell a
+/// bench test build from a production build.
+const BENCH_CAPABILITIES: u32 =
+    if cfg!(feature = "bench-panic") { caps::BENCH_PANIC } else { 0 } | if cfg!(feature = "bench-isr-probe") { caps::BENCH_ISR_PROBE } else { 0 };
 
 /// Motion tick period = PIO pulse window.
 pub const TICK_US: u32 = 200;
@@ -63,6 +73,8 @@ pub struct BoardHal {
     led: Out,
     #[cfg(feature = "bench-panic")]
     panic_trigger: In,
+    #[cfg(feature = "bench-isr-probe")]
+    isr_probe: Out,
     sms: [StepSm; AXES],
     runs: [StepRuns; AXES],
     enabled: [bool; AXES],
@@ -98,6 +110,8 @@ impl BoardHal {
         let interlock = pins.gpio27.into_pull_up_input().into_dyn_pin();
         #[cfg(feature = "bench-panic")]
         let panic_trigger = pins.gpio28.into_pull_up_input().into_dyn_pin();
+        #[cfg(feature = "bench-isr-probe")]
+        let isr_probe = pins.gpio28.into_push_pull_output_in_state(PinState::Low).into_dyn_pin();
         let led = pins.gpio25.into_push_pull_output_in_state(PinState::Low).into_dyn_pin();
 
         pio_pins!(pins, FunctionPio0: gpio0, gpio1, gpio2, gpio3, gpio4, gpio5, gpio6, gpio7);
@@ -117,6 +131,8 @@ impl BoardHal {
             led,
             #[cfg(feature = "bench-panic")]
             panic_trigger,
+            #[cfg(feature = "bench-isr-probe")]
+            isr_probe,
             sms,
             runs: [StepRuns::new(); AXES],
             enabled: [false; AXES],
@@ -190,6 +206,14 @@ impl BoardHal {
     /// `true` while the bench panic trigger (GP28) is tied to GND.
     pub fn panic_requested(&mut self) -> bool {
         self.panic_trigger.is_low().unwrap_or(false)
+    }
+}
+
+#[cfg(feature = "bench-isr-probe")]
+impl BoardHal {
+    /// Drive the tick-interrupt probe (GP28).
+    pub fn isr_probe(&mut self, high: bool) {
+        let _ = self.isr_probe.set_state(PinState::from(high));
     }
 }
 

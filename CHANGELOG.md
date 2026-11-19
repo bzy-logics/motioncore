@@ -11,6 +11,15 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 ## [Unreleased]
 
+### Added — software-tested; not hardware-validated
+
+- Bench test builds from committed code: `motioncore firmware build --bench bench-isr-probe` (GP28 / PB1 high while the motion tick interrupt runs) and `--bench bench-panic`. Flash and verify take the same `--bench` option (#114).
+  - The feature is part of the lockfile and build hash. Bench builds go to their own artifact directory.
+  - The firmware reports the feature as a new capability bit (`bench.isr_probe`, `bench.panic`). `firmware verify` prints the build type and the engine warns when it connects to a bench build.
+  - Production build hashes are unchanged. The protocol version is unchanged: older hosts ignore the new bits.
+- `motioncore firmware rate-test`: the RP2040 test 8 step-rate sweep, talking to the MCU directly because the engine caps moves at the advertised rate. It refuses to run without `--no-motor-power` or while an engine is reachable (#114).
+- CI lints every bench feature on both boards and checks that the two features sharing a pin can't be built together (#114).
+
 ### Fixed — software-tested
 
 - MoveL was refused from a pose with a joint resting at its soft limit: the step-quantised position sits a fraction of a step outside (e.g. 180° at 213.333333 steps/° reads 180.00000028°), and the start point was checked against the limits too (#23).

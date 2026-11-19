@@ -9,18 +9,27 @@
 //! | ENDSTOP0| PB0 | input with pull-up, switch to GND (active low) |
 //!
 //! | PANIC   | PB1 | feature `bench-panic` only: pull-up input, tie to GND to make the firmware panic (bench test of the panic safe state) |
+//! | PROBE   | PB1 | feature `bench-isr-probe` only: output, high while the motion tick interrupt (`TIM3`) runs |
 //!
 //! STM32 I/O is 3.3 V. Verify driver logic thresholds and never connect
 //! 5 V/12 V switch circuits directly.
 
 use motioncore_firmware_core::Hal;
 use motioncore_protocol::caps;
-#[cfg(feature = "bench-panic")]
+#[cfg(any(feature = "bench-panic", feature = "bench-isr-probe"))]
 use stm32f4xx_hal::gpio::PB1;
 use stm32f4xx_hal::gpio::{Input, Output, PushPull, PA0, PA1, PA2, PB0};
 
 pub const AXES: usize = 1;
-pub const CAPABILITIES: u32 = caps::STEPPER_STEP_DIR | caps::ENDSTOP | caps::WATCHDOG;
+pub const CAPABILITIES: u32 = caps::STEPPER_STEP_DIR | caps::ENDSTOP | caps::WATCHDOG | BENCH_CAPABILITIES;
+
+#[cfg(all(feature = "bench-panic", feature = "bench-isr-probe"))]
+compile_error!("features `bench-panic` and `bench-isr-probe` both use PB1; build one at a time");
+
+/// Reported at handshake so `firmware verify` and the engine can tell a
+/// bench test build from a production build.
+const BENCH_CAPABILITIES: u32 =
+    if cfg!(feature = "bench-panic") { caps::BENCH_PANIC } else { 0 } | if cfg!(feature = "bench-isr-probe") { caps::BENCH_ISR_PROBE } else { 0 };
 
 /// Cycles for the minimum STEP high time, STEP low time and DIR setup time
 /// at 96 MHz (~2 µs each). Check against the driver datasheet.
@@ -34,10 +43,12 @@ pub struct BoardHal {
     dir_state: bool,
     #[cfg(feature = "bench-panic")]
     panic_trigger: PB1<Input>,
+    #[cfg(feature = "bench-isr-probe")]
+    isr_probe: PB1<Output<PushPull>>,
 }
 
 impl BoardHal {
-    pub fn new(pa0: PA0, pa1: PA1, pa2: PA2, pb0: PB0, #[cfg(feature = "bench-panic")] pb1: PB1) -> Self {
+    pub fn new(pa0: PA0, pa1: PA1, pa2: PA2, pb0: PB0, #[cfg(any(feature = "bench-panic", feature = "bench-isr-probe"))] pb1: PB1) -> Self {
         let mut enable = pa2.into_push_pull_output();
         enable.set_high(); // disabled
         Self {
@@ -48,6 +59,18 @@ impl BoardHal {
             dir_state: false,
             #[cfg(feature = "bench-panic")]
             panic_trigger: pb1.into_pull_up_input(),
+            #[cfg(feature = "bench-isr-probe")]
+            isr_probe: pb1.into_push_pull_output(),
+        }
+    }
+
+    /// Drive the tick-interrupt probe (PB1).
+    #[cfg(feature = "bench-isr-probe")]
+    pub fn isr_probe(&mut self, high: bool) {
+        if high {
+            self.isr_probe.set_high();
+        } else {
+            self.isr_probe.set_low();
         }
     }
 

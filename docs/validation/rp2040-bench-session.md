@@ -22,15 +22,17 @@ How to run the RP2040 hardware validation of [`docs/rp2040.md`](../rp2040.md) se
 
 ## 2. Firmware builds
 
-Record the **build hash** of every image you flash. `motioncore firmware verify` prints the hash the MCU reports.
+All three builds come from committed code through the firmware builder. Record the **build hash** of every image you flash. `motioncore firmware verify` prints the hash the MCU reports and the build type: `production`, or `BENCH TEST BUILD (<feature>)`.
 
-| Build | For | How |
+| Build | For | Build, flash and verify (BOOTSEL held while plugging in USB) |
 |---|---|---|
-| **A: release** | 1–6, 8, 10–15 | `motioncore firmware build --board rp2040-pico`, then `motioncore firmware flash --board rp2040-pico --yes` and `motioncore firmware verify --board rp2040-pico --device <port>` |
-| **B: tick-ISR probe** | 7, 9 (ISR time) | A temporary build that toggles GP28 at the start and end of `TIMER_IRQ_0`. **There is no build option for this yet (#114)**; until there is, it means a local edit to `boards/rp2040/src/main.rs` that is never committed. Note the edit in the record. |
-| **C: bench-panic** | 16 | `cargo build -p motioncore-board-rp2040 --profile firmware --target thumbv6m-none-eabi --features bench-panic`. The firmware builder has no feature option yet (#114), so flash the ELF `target/thumbv6m-none-eabi/firmware/motioncore-board-rp2040` with `probe-rs download --chip RP2040 <elf>` (SWD probe), or convert it with `picotool uf2 convert <elf> firmware.uf2 --family rp2040` and copy it to the BOOTSEL drive. |
+| **A: production** | 1–6, 8, 10–15 | `motioncore firmware build --board rp2040-pico`<br>`motioncore firmware flash --board rp2040-pico --yes`<br>`motioncore firmware verify --board rp2040-pico --device <port>` |
+| **B: tick-ISR probe** | 7, 9 (ISR time) | the same three commands with `--bench bench-isr-probe` added. GP28 is high while the motion tick interrupt (`TIMER_IRQ_0`) runs. |
+| **C: panic trigger** | 16 | the same three commands with `--bench bench-panic` added. GP28 tied to GND makes the firmware panic in the next tick. |
 
-**Never** leave build B or C on a machine that drives motors. Reflash build A after the session.
+Bench builds go to their own directory (`build/firmware/rp2040-pico-<feature>/`), so build A stays ready to reflash. The engine logs a warning when it connects to a bench build.
+
+**Never** leave build B or C on a machine that drives motors. Reflash build A after the session and check that `verify` reports `production`.
 
 ## 3. Robot profile and engine
 
@@ -87,7 +89,7 @@ The order keeps each build and wiring change to a minimum.
 |---|---|---|---|---|
 | 1 | 1 Safe start, 2 Identity | A | S | Test 1 also covers BOOTSEL mode and flashing itself |
 | 2 | 3–6 pulse timing, DIR, frequency | A | S | Jog j1 at 1, 10 and 50 kHz; reversing jog for test 5 |
-| 3 | 8 Max sustainable rate | A | S | See the limitation below |
+| 3 | 8 Max sustainable rate | A | S | Engine stopped; `motioncore firmware rate-test`, see below |
 | 4 | 10 Stop latency, 11 Watchdog, 13 Interlock, 14 Endstop | A | S | Test 11: unplug USB while enabled. Test 13: pull the GP27 jumper while moving |
 | 5 | 12 Hang | A | S | Halt core 0 with the SWD probe |
 | 6 | 7 Jitter, 9 Six axes | B | S then M | Test 9: `motioncore movej` all six axes the same distance at `--speed 1` (50 kHz each) |
@@ -95,7 +97,22 @@ The order keeps each build and wiring change to a minimum.
 | 8 | 16 Panic safe state | C | M | Tie GP28 to GND during a six-axis move |
 | 9 | Reflash build A, then `motioncore firmware verify` | A | – | – |
 
-**Test 8 limitation.** The engine refuses profiles above the board's advertised 50 kHz, so through the engine the rate can't be raised past it. Record whether 50 kHz on six axes runs without `StepRateExceeded`, and note the ISR time from test 9. Finding the real maximum needs a build with a higher advertised rate (#114).
+**Test 8: max sustainable rate.** The engine refuses profiles above the board's advertised 50 kHz, so it can't measure past that limit. `motioncore firmware rate-test` talks to the MCU directly instead.
+
+1. Stop the engine.
+2. Keep GP27 jumpered to GND and the motor supply off.
+3. Run the test:
+
+   ```bash
+   motioncore firmware rate-test --device <port> --no-motor-power
+   ```
+
+All six channels run together. Each stage ramps up, holds the rate for 1 s and ramps down. The stages go from 10 to 250 kHz in 10 kHz steps (`--from`, `--to`, `--step`, `--hold-ms`). A stage passes when the MCU reports no fault and every channel ends at the exact step count. The sweep stops at the first failure and prints:
+- the fault, for example `StepRateExceeded`;
+- the highest rate that passed;
+- whether the advertised 50 kHz is at most half of that rate (the pass criterion).
+
+Capture STEP0 at the highest passing stage to confirm the rate on the analyser. If no stage fails, the tool says so, and the real limit lies above `--to`.
 
 ## 6. After tests 1–16: #26 and motors
 
