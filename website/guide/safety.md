@@ -95,6 +95,10 @@ Follow the bring-up procedure for your board, in order, without skipping the no-
 
 Performance limits must be **measured** on your hardware, not assumed.
 
+## Safety concept
+
+The [safety concept](https://github.com/bzy-logics/motioncore/blob/main/docs/safety-concept.md) lists every protection with its layer (offline validation, runtime monitoring, or hardware only), what it covers, its limits and its validation status. **Offline checks, including collision checking, validate the plan, not the machine;** only the hardware E-stop chain works with every piece of software dead.
+
 ## Known gaps
 
 - Joint limits alone do not guarantee collision-free motion. With link radii, moves are checked against a capsule model of the robot itself and the floor ([collision checking](/guide/configuration#collision-checking)); there is no model of anything else in the cell.
