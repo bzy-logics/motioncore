@@ -12,8 +12,8 @@
 // Index loops mirror the matrix notation in this module.
 #![allow(clippy::needless_range_loop)]
 
-use crate::collision::JointSpec;
 use crate::math::{apply, mul, rotate, rpy, translate, M4, V3};
+use crate::model::{joint_frames, JointSpec, KinematicModel};
 use thiserror::Error;
 
 /// Tool pose: position (mm) and rotation matrix.
@@ -94,22 +94,17 @@ impl Chain {
         self.joints.len() >= 6
     }
 
-    /// Frames of every joint (after its motion) and of the tool.
-    fn frames(&self, q: &[f64]) -> (Vec<M4>, M4) {
-        let mut out: Vec<M4> = Vec::with_capacity(self.joints.len());
-        let mut base = translate([0.0; 3]);
-        for (j, &v) in self.joints.iter().zip(q) {
-            let motion = if j.prismatic { translate([j.axis[0] * v, j.axis[1] * v, j.axis[2] * v]) } else { rotate(j.axis, v.to_radians()) };
-            base = mul(&base, &mul(&mul(&translate(j.origin), &rpy(j.rotation_deg)), &motion));
-            out.push(base);
-        }
-        let tool = mul(&base, &translate(self.tool));
+    /// Frames of every joint (after its motion, from [`joint_frames`]) and
+    /// of the tool.
+    fn frames_and_tool(&self, q: &[f64]) -> (Vec<M4>, M4) {
+        let out = joint_frames(&self.joints, q);
+        let tool = mul(out.last().expect("a chain has joints"), &translate(self.tool));
         (out, tool)
     }
 
     /// Tool pose for joint values `q`.
     pub fn forward(&self, q: &[f64]) -> ToolPose {
-        let (_, t) = self.frames(q);
+        let (_, t) = self.frames_and_tool(q);
         pose_of(&t)
     }
 
@@ -184,7 +179,7 @@ impl Chain {
 
     /// Column i = d(tool position, weighted rotation)/d(q_i), per deg or mm.
     fn jacobian(&self, q: &[f64]) -> Vec<[f64; 6]> {
-        let (frames, tool) = self.frames(q);
+        let (frames, tool) = self.frames_and_tool(q);
         let p = apply(&tool, [0.0; 3]);
         let d = std::f64::consts::PI / 180.0;
         self.joints
@@ -257,6 +252,28 @@ impl Chain {
             out.push(q.clone());
         }
         Ok(out)
+    }
+}
+
+impl KinematicModel for Chain {
+    fn joints(&self) -> &[JointSpec] {
+        &self.joints
+    }
+
+    fn limits(&self) -> &[(f64, f64)] {
+        &self.limits
+    }
+
+    fn tool_pose(&self, q: &[f64]) -> Option<ToolPose> {
+        Some(self.forward(q))
+    }
+
+    fn jacobian(&self, q: &[f64]) -> Option<Vec<[f64; 6]>> {
+        Some(Chain::jacobian(self, q))
+    }
+
+    fn ik_near(&self, target: &ToolPose, seed: &[f64]) -> Result<Vec<f64>, ChainError> {
+        self.inverse(target, seed)
     }
 }
 
@@ -364,12 +381,12 @@ fn solve(mut a: Vec<Vec<f64>>, mut b: Vec<f64>) -> Option<Vec<f64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collision::tests::dummy;
+    use crate::model::tests::dummy_joints;
 
     const LIMITS: [(f64, f64); 6] = [(-170.0, 170.0), (-73.0, 90.0), (35.0, 180.0), (-180.0, 180.0), (-120.0, 120.0), (-720.0, 720.0)];
 
     fn arm() -> Chain {
-        Chain::new(dummy().joints().to_vec(), LIMITS.to_vec()).unwrap()
+        Chain::new(dummy_joints(), LIMITS.to_vec()).unwrap()
     }
 
     #[test]
@@ -463,7 +480,7 @@ mod tests {
 
     #[test]
     fn chains_must_be_serial() {
-        let mut j = dummy().joints().to_vec();
+        let mut j = dummy_joints();
         j[3].parent = Some(1);
         assert!(matches!(Chain::new(j, LIMITS.to_vec()), Err(ChainError::NotSerial(_))));
     }

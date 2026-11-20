@@ -11,6 +11,10 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 ## [Unreleased]
 
+### Changed — internal, software-tested
+
+- One kinematics interface (ADR 0003 stage 1, #90). `KinematicModel` (geometry, limits, frames, tool pose, Jacobian, `ik_near`, optional `ik_all`) with one forward-kinematics implementation, `joint_frames`; the serial `Chain` and the new `JointTree` implement it. The collision model now takes its frames from the robot's kinematic model instead of computing its own, so the solver and the collision check cannot disagree about where a link is. The unused `Kinematics` trait and `JointIdentity` are removed; the builtin `joint_identity` plugin keeps its manifest and capabilities. No change to the engine API, the protocol or robot profiles.
+
 ### Documentation
 
 - ADR 0003, motion architecture (`docs/adr/0003-motion-architecture.md`): one `KinematicModel`, one `Trajectory` type, planners behind one interface, validation as an explicit stage with a report, execution separate from planning, dependency rules enforced in CI; eight refactor stages #90–#97 (#79).

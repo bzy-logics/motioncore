@@ -13,6 +13,7 @@ use motioncore_device_graph::{AxisSection, Direction, JointKind, ResolvedMcu, Re
 use motioncore_engine_api::v1 as pb;
 use motioncore_kinematics::chain::{pose_from, Chain, ToolPose};
 use motioncore_kinematics::collision::{CollisionModel, JointSpec};
+use motioncore_kinematics::{JointTree, KinematicModel};
 use motioncore_mcu_manager::{McuError, McuEvent, McuLink};
 use motioncore_motion::blend::plan_blended;
 use motioncore_motion::sampled::time_scale;
@@ -133,13 +134,26 @@ fn clearance_note(min_gap: Option<f64>) -> String {
     }
 }
 
-/// Build the collision model from the profile geometry, parents first.
+/// Build the collision model from the profile geometry, parents first, on
+/// the robot's kinematic model.
 fn collision_model(robot: &ResolvedRobot) -> Option<(CollisionModel, Vec<usize>)> {
     if !robot.has_collision_model() {
         return None;
     }
+    let (kin, order) = kinematic_model(robot)?;
+    Some((CollisionModel::from_model(kin, COLLISION_MARGIN_MM), order))
+}
+
+/// The robot's kinematic model: its serial chain when the geometry is one,
+/// otherwise the joint tree (frames only).
+fn kinematic_model(robot: &ResolvedRobot) -> Option<(Arc<dyn KinematicModel>, Vec<usize>)> {
+    if let Some((chain, order)) = serial_chain(robot) {
+        return Some((Arc::new(chain), order));
+    }
     let (joints, order) = joint_specs(robot)?;
-    Some((CollisionModel::new(joints, COLLISION_MARGIN_MM), order))
+    let axes = &robot.file.axes;
+    let limits = order.iter().map(|&i| (axes[i].min, axes[i].max)).collect();
+    Some((Arc::new(JointTree::new(joints, limits)), order))
 }
 
 /// The serial chain for Cartesian moves, when the geometry is one.

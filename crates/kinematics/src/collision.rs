@@ -2,10 +2,8 @@
 //!
 //! Each joint owns one *body*: capsules (radius = the joint's link radius)
 //! from its frame origin to the origins of the joints mounted on it and to
-//! its tip. Joint frames follow the URDF convention used by the robot
-//! profile geometry:
-//!
-//! `frame(child) = frame(parent) · T(origin) · RPY(rotation) · Joint(q about axis)`
+//! its tip. Joint frames come from the robot's [`KinematicModel`] (the one
+//! forward-kinematics implementation, [`crate::model::joint_frames`]).
 //!
 //! Bodies that touch by construction are never tested against each other:
 //! a joint and its parent, and joints connected only through bodies of zero
@@ -18,21 +16,10 @@
 //! reduced speed during commissioning, or a hardware E-stop.
 
 use std::fmt;
+use std::sync::Arc;
 
-/// Joint description, in mm and degrees.
-#[derive(Debug, Clone, PartialEq)]
-pub struct JointSpec {
-    pub id: String,
-    /// Index of the parent joint (must come earlier in the list); None = base.
-    pub parent: Option<usize>,
-    pub origin: [f64; 3],
-    pub rotation_deg: [f64; 3],
-    /// Unit joint axis.
-    pub axis: [f64; 3],
-    pub tip: Option<[f64; 3]>,
-    pub radius: f64,
-    pub prismatic: bool,
-}
+pub use crate::model::JointSpec;
+use crate::model::{JointTree, KinematicModel};
 
 /// What a check found.
 #[derive(Debug, Clone, PartialEq)]
@@ -63,7 +50,7 @@ impl fmt::Display for Collision {
     }
 }
 
-use crate::math::{apply, dot, mul, norm, rotate, rpy, sub, translate, M4, V3};
+use crate::math::{apply, dot, norm, sub, M4, V3};
 
 /// Exact minimum distance between segments p1–q1 and p2–q2.
 pub fn segment_distance(p1: V3, q1: V3, p2: V3, q2: V3) -> f64 {
@@ -110,7 +97,8 @@ pub fn segment_distance(p1: V3, q1: V3, p2: V3, q2: V3) -> f64 {
 /// Capsule model of a joint tree.
 #[derive(Debug, Clone)]
 pub struct CollisionModel {
-    joints: Vec<JointSpec>,
+    /// Geometry and frames.
+    kin: Arc<dyn KinematicModel>,
     /// Local segment end points of each body (in its joint frame).
     ends: Vec<Vec<V3>>,
     /// Every gap that is measured: the pairs, then each body's floor gap.
@@ -177,8 +165,16 @@ fn axis_distance(v: V3, axis: V3) -> f64 {
 }
 
 impl CollisionModel {
-    /// Build the model. Joints must be ordered parents first.
+    /// Build the model from joint geometry alone. Joints must be ordered
+    /// parents first.
     pub fn new(joints: Vec<JointSpec>, margin: f64) -> Self {
+        Self::from_model(Arc::new(JointTree::unbounded(joints)), margin)
+    }
+
+    /// Build the model on a robot's kinematic model, which supplies the
+    /// geometry and every frame.
+    pub fn from_model(kin: Arc<dyn KinematicModel>, margin: f64) -> Self {
+        let joints = kin.joints();
         let n = joints.len();
         let mut ends: Vec<Vec<V3>> = vec![Vec::new(); n];
         for (i, j) in joints.iter().enumerate() {
@@ -268,23 +264,17 @@ impl CollisionModel {
                 Item::Floor(x) => chain(x).into_iter().map(|i| (i, x)).collect(),
             })
             .collect();
-        Self { joints, ends, items, movers, reach, margin }
+        Self { kin, ends, items, movers, reach, margin }
     }
 
     pub fn joints(&self) -> &[JointSpec] {
-        &self.joints
+        self.kin.joints()
     }
 
-    /// World frame of every joint for joint values `q` (deg / mm).
+    /// World frame of every joint for joint values `q` (deg / mm), from the
+    /// kinematic model.
     pub fn frames(&self, q: &[f64]) -> Vec<M4> {
-        let mut out: Vec<M4> = Vec::with_capacity(self.joints.len());
-        for (i, j) in self.joints.iter().enumerate() {
-            let base = j.parent.map(|p| out[p]).unwrap_or(translate([0.0; 3]));
-            let v = q.get(i).copied().unwrap_or(0.0);
-            let motion = if j.prismatic { translate([j.axis[0] * v, j.axis[1] * v, j.axis[2] * v]) } else { rotate(j.axis, v.to_radians()) };
-            out.push(mul(&base, &mul(&mul(&translate(j.origin), &rpy(j.rotation_deg)), &motion)));
-        }
-        out
+        self.kin.frames(q)
     }
 
     fn segments(&self, q: &[f64]) -> Vec<Vec<(V3, V3)>> {
@@ -309,20 +299,20 @@ impl CollisionModel {
                     let mut gap = f64::INFINITY;
                     for &(p1, q1) in &segs[a] {
                         for &(p2, q2) in &segs[b] {
-                            gap = gap.min(segment_distance(p1, q1, p2, q2) - self.joints[a].radius - self.joints[b].radius);
+                            gap = gap.min(segment_distance(p1, q1, p2, q2) - self.joints()[a].radius - self.joints()[b].radius);
                         }
                     }
                     gap
                 }
-                Item::Floor(x) => segs[x].iter().map(|&(p, e)| p[2].min(e[2]) - self.joints[x].radius).fold(f64::INFINITY, f64::min),
+                Item::Floor(x) => segs[x].iter().map(|&(p, e)| p[2].min(e[2]) - self.joints()[x].radius).fold(f64::INFINITY, f64::min),
             })
             .collect()
     }
 
     fn report(&self, item: usize, gap: f64, at: Vec<f64>, between: bool) -> Collision {
         let (a, b) = match self.items[item] {
-            Item::Pair(a, b) => (self.joints[a].id.clone(), self.joints[b].id.clone()),
-            Item::Floor(x) => (self.joints[x].id.clone(), "floor".to_string()),
+            Item::Pair(a, b) => (self.joints()[a].id.clone(), self.joints()[b].id.clone()),
+            Item::Floor(x) => (self.joints()[x].id.clone(), "floor".to_string()),
         };
         Collision { a, b, gap, at, between }
     }
@@ -347,7 +337,7 @@ impl CollisionModel {
                     .map(|&(i, x)| {
                         let r = self.reach[x][i].as_ref().expect("a mover has a reach");
                         let d = r.fixed + r.prismatic.iter().map(|&k| travel.get(k).copied().unwrap_or(0.0)).sum::<f64>();
-                        (i, if self.joints[i].prismatic { d } else { d.to_radians() })
+                        (i, if self.joints()[i].prismatic { d } else { d.to_radians() })
                     })
                     .collect()
             })
@@ -386,7 +376,7 @@ impl CollisionModel {
     /// may not dip more than [`BACK_OUT_MM`] below its start and must not end
     /// smaller.
     pub fn check_path_within(&self, from: &[f64], to: &[f64], deviation: &[f64]) -> Result<PathClearance, Collision> {
-        let nj = self.joints.len();
+        let nj = self.joints().len();
         let at = |v: &[f64], i: usize| v.get(i).copied().unwrap_or(0.0);
         let dev = |i: usize| deviation.get(i).copied().unwrap_or(0.0).abs();
         let dq: Vec<f64> = (0..nj).map(|i| at(to, i) - at(from, i)).collect();
@@ -395,7 +385,7 @@ impl CollisionModel {
         // Gap change per unit of the path parameter, and the gap lost to the deviation.
         let lip: Vec<f64> = rates.iter().map(|r| r.iter().map(|&(i, c)| c * dq[i].abs()).sum()).collect();
         let slack: Vec<f64> = rates.iter().map(|r| r.iter().map(|&(i, c)| c * dev(i)).sum()).collect();
-        let n = dq.iter().zip(&self.joints).map(|(d, j)| d.abs() / if j.prismatic { 1.0 } else { 0.5 }).fold(0.0, f64::max).ceil().clamp(1.0, 10_000.0);
+        let n = dq.iter().zip(self.joints()).map(|(d, j)| d.abs() / if j.prismatic { 1.0 } else { 0.5 }).fold(0.0, f64::max).ceil().clamp(1.0, 10_000.0);
         let ds_max = 1.0 / n;
         let lip_max = lip.iter().copied().fold(0.0, f64::max);
         let ds_min = if lip_max > 0.0 { (RESOLUTION_MM / lip_max).min(ds_max) } else { ds_max };
@@ -466,27 +456,7 @@ pub(crate) mod tests {
 
     /// The six-axis desktop arm of robot-profiles/dummy-arm-virtual.toml.
     pub(crate) fn dummy() -> CollisionModel {
-        let j = |id: &str, parent: Option<usize>, origin: V3, rot: V3, tip: Option<V3>, radius: f64| JointSpec {
-            id: id.into(),
-            parent,
-            origin,
-            rotation_deg: rot,
-            axis: [0.0, 0.0, 1.0],
-            tip,
-            radius,
-            prismatic: false,
-        };
-        CollisionModel::new(
-            vec![
-                j("j1", None, [0.0; 3], [0.0; 3], None, 30.0),
-                j("j2", Some(0), [35.0, 0.0, 109.0], [0.0, -90.0, -90.0], None, 22.0),
-                j("j3", Some(1), [146.0, 0.0, 0.0], [0.0, 0.0, 90.0], None, 20.0),
-                j("j4", Some(2), [-52.0, -115.0, 0.0], [90.0, 0.0, 0.0], None, 18.0),
-                j("j5", Some(3), [0.0; 3], [-90.0, 0.0, 0.0], None, 18.0),
-                j("j6", Some(4), [0.0; 3], [90.0, 0.0, 0.0], Some([0.0, 0.0, 72.0]), 15.0),
-            ],
-            2.0,
-        )
+        CollisionModel::new(crate::model::tests::dummy_joints(), 2.0)
     }
 
     #[test]
@@ -514,7 +484,7 @@ pub(crate) mod tests {
             .items
             .iter()
             .filter_map(|it| match *it {
-                Item::Pair(a, b) => Some((m.joints[a].id.clone(), m.joints[b].id.clone())),
+                Item::Pair(a, b) => Some((m.joints()[a].id.clone(), m.joints()[b].id.clone())),
                 Item::Floor(_) => None,
             })
             .collect();

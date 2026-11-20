@@ -1,9 +1,8 @@
 //! Reference host plugins compiled into the engine.
 //!
-//! They depend only on the public plugin SDK (and the kinematics crate), the
+//! They depend only on the public plugin SDK, the
 //! same contract external plugins use.
 
-use motioncore_kinematics::{JointIdentity, Kinematics};
 use motioncore_plugin_sdk::{Manifest, Plugin, PluginContext, PluginKind, API_VERSION};
 
 fn manifest(id: &str, description: &str, provides: &[&str], requires: &[&str], permissions: &[&str]) -> Manifest {
@@ -61,15 +60,18 @@ impl Plugin for StepDirActuator {
     }
 }
 
-/// Joint-space identity kinematics.
+/// Joint-space identity kinematics: the pose of a joint-space robot is its
+/// joint vector, so forward and inverse kinematics are the identity.
 #[derive(Default)]
 pub struct JointIdentityKinematics {
-    solver: Option<JointIdentity>,
+    /// Joint count while active.
+    joints: Option<usize>,
 }
 
 impl JointIdentityKinematics {
-    pub fn solver(&self) -> Option<&dyn Kinematics> {
-        self.solver.as_ref().map(|s| s as &dyn Kinematics)
+    /// Joint count while the plugin is active.
+    pub fn joints(&self) -> Option<usize> {
+        self.joints
     }
 }
 
@@ -84,15 +86,11 @@ impl Plugin for JointIdentityKinematics {
         )
     }
     fn activate(&mut self, ctx: &PluginContext) -> Result<(), String> {
-        let solver = JointIdentity::new(ctx.axis_ids.len());
-        // Self-check before declaring the capability available.
-        let zero = vec![0.0; ctx.axis_ids.len()];
-        solver.forward(&zero).map_err(|e| e.to_string())?;
-        self.solver = Some(solver);
+        self.joints = Some(ctx.axis_ids.len());
         Ok(())
     }
     fn deactivate(&mut self) {
-        self.solver = None;
+        self.joints = None;
     }
 }
 

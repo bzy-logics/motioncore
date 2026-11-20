@@ -96,7 +96,7 @@ crates/
   protocol/          host ↔ MCU wire protocol (no_std; postcard + CRC-16 + COBS)
   safety/            robot state machine and fault model
   motion/            trapezoidal planning, validation, MCU segment generation
-  kinematics/        FK/IK abstractions, joint-space identity solver
+  kinematics/        KinematicModel (one FK), serial-chain IK and Cartesian lines, capsule collision model
   device-graph/      robot configuration schema, board metadata, resolver
   plugin-sdk/        plugin contract (manifest, permissions, Plugin trait)
   plugin-runtime/    discovery, validation, dependency resolution, lifecycle
