@@ -11,6 +11,10 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 ## [Unreleased]
 
+### Documentation
+
+- Safety concept (`docs/safety-concept.md`): hazards, and every protection with its layer (offline validation, runtime monitoring, hardware only), coverage, limits and validation status. Linked from the safety guide, the stop specification and the HAL ADR (#78).
+
 ### Added — software-tested; not hardware-validated
 
 - Bench test builds from committed code: `motioncore firmware build --bench bench-isr-probe` (GP28 / PB1 high while the motion tick interrupt runs) and `--bench bench-panic`. Flash and verify take the same `--bench` option (#114).

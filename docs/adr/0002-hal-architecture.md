@@ -3,6 +3,7 @@
 - **Status:** Accepted (2026-11-18)
 - **Issue:** [#67](https://github.com/bzy-logics/motioncore/issues/67) · Epic [#75](https://github.com/bzy-logics/motioncore/issues/75)
 - **Applies to:** `crates/firmware-hal`, `crates/firmware-stepper`, `crates/firmware-core`, `crates/firmware-pio-step`, `crates/simulator`, `boards/*`
+- **Related:** [safety concept](../safety-concept.md) (which protections the firmware and HAL provide, and which only hardware does)
 
 ## Context
 

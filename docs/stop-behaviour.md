@@ -3,6 +3,7 @@
 - **Status:** Accepted by the project owner on 2026-11-19 ([#20](https://github.com/bzy-logics/motioncore/issues/20)). This document is the **authoritative contract** for the engine, the MCU firmware, the HAL, the ratavyr API and the sindrava UI. Where the implementation differs, the implementation is wrong; section 10 lists the known gaps and the issues that close them.
 - **Applies to:** engine (`crates/core`, `crates/safety`), firmware (`crates/firmware-core`, `crates/firmware-stepper`, `boards/*`), HAL, ratavyr, sindrava, MCL programs.
 - **Scope of claims:** nothing in this document makes MotionCore a safety-rated control system. Software stop functions are operational functions; the emergency stop is hardware.
+- **Related:** [safety concept](safety-concept.md): every protection with its layer, limits and validation status.
 
 ## 1. Principles
 
