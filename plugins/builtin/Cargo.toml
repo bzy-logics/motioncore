@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 motioncore-plugin-sdk = { workspace = true }
-motioncore-kinematics = { workspace = true }
 
 [dev-dependencies]
 motioncore-plugin-runtime = { workspace = true }

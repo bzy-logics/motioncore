@@ -1213,7 +1213,6 @@ dependencies = [
 name = "motioncore-builtin-plugins"
 version = "0.3.0"
 dependencies = [
- "motioncore-kinematics",
  "motioncore-plugin-runtime",
  "motioncore-plugin-sdk",
 ]

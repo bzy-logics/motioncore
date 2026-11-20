@@ -105,5 +105,5 @@ The strategy is a single-switch search. A back-off and slow second touch for bet
 
 - **Blending between separate commands.** `MoveJPath` blends the waypoints of one command; a new command still waits until the robot is `ready`.
 - **Cartesian paths other than lines.** `MoveL` moves along a straight line; arcs and blended Cartesian paths are not planned.
-- **Kinematics in the loop.** Only the joint-space identity solver exists.
+- **Closed-form inverse kinematics.** Serial chains use a numerical solver that follows the current branch; all solutions and configuration choice come with #81. Geometries that are not one serial chain have forward kinematics (for collision checking) but no inverse.
 - **Encoder feedback.** Measured position is the step counter.
