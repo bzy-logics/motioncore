@@ -42,6 +42,10 @@ Every motion command (jog, MoveTo, MoveJ, MoveJPath, MoveL) runs in three phases
 
 The revision changes with every supervisor transition (including Stop, E-stop, faults, enable/disable, homing and motion start/end), whenever planned motion is discarded, when commanded positions are resynced from the MCU, and when an axis is homed. A Stop that arrives while a move is being planned therefore always wins.
 
+### One trajectory type
+
+Planner output converts losslessly to `motioncore_motion::Trajectory`: per-joint polynomials of degree at most 3 on shared breakpoints, with the motion kind, limits and speed scale. Constant-acceleration profiles (single-axis moves, `MoveJ`, `MoveJPath`) convert piece by piece; time-scaled paths (`MoveL`) become the cubic Hermite polynomial through their knot positions and velocities. Property tests check every planner's conversion. Planners return it directly and segmentation reads it from stages 3 and 4 of [ADR 0003](https://github.com/bzy-logics/motioncore/blob/main/docs/adr/0003-motion-architecture.md) on (#92, #93); until then the engine still segments the planners' own types.
+
 ## 4. Segmentation
 
 The profile is converted into constant-acceleration MCU segments:

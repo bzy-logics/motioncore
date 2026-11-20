@@ -13,6 +13,7 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 ### Changed — internal, software-tested
 
+- One trajectory type (ADR 0003 stage 2, #91). `Trajectory`: per-joint piecewise polynomials of degree ≤ 3 on shared breakpoints, with motion kind, limits and speed scale, evaluated for position, velocity, acceleration and jerk at any time. Lossless conversions from every planner's output: `from_profiles` (trapezoids, synchronised moves, blended paths) and `from_sampled` (time-scaled paths, as cubic Hermite through the knots). Property tests, 1000 cases per planner, check the conversions. The engine does not use it yet; no external change.
 - One kinematics interface (ADR 0003 stage 1, #90). `KinematicModel` (geometry, limits, frames, tool pose, Jacobian, `ik_near`, optional `ik_all`) with one forward-kinematics implementation, `joint_frames`; the serial `Chain` and the new `JointTree` implement it. The collision model now takes its frames from the robot's kinematic model instead of computing its own, so the solver and the collision check cannot disagree about where a link is. The unused `Kinematics` trait and `JointIdentity` are removed; the builtin `joint_identity` plugin keeps its manifest and capabilities. No change to the engine API, the protocol or robot profiles.
 
 ### Documentation
