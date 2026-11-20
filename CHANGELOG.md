@@ -13,6 +13,7 @@ All notable changes to MotionCore. Each capability is listed with its validation
 
 ### Documentation
 
+- ADR 0003, motion architecture (`docs/adr/0003-motion-architecture.md`): one `KinematicModel`, one `Trajectory` type, planners behind one interface, validation as an explicit stage with a report, execution separate from planning, dependency rules enforced in CI; eight refactor stages #90–#97 (#79).
 - Safety concept (`docs/safety-concept.md`): hazards, and every protection with its layer (offline validation, runtime monitoring, hardware only), coverage, limits and validation status. Linked from the safety guide, the stop specification and the HAL ADR (#78).
 
 ### Added — software-tested; not hardware-validated
