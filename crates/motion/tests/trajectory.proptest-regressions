@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ed06b330b2b8d406f66273748f30d2a44164da09e5e2cfb439861a9e4d77c942 # shrinks to joints = 4, lims = [AxisLimits { min: -500.0, max: 500.0, max_velocity: 86.34145238977695, max_acceleration: 3383.183633318062 }, AxisLimits { min: -500.0, max: 500.0, max_velocity: 53.38640561607705, max_acceleration: 2758.8394410316573 }, AxisLimits { min: -500.0, max: 500.0, max_velocity: 191.6012886046816, max_acceleration: 4693.77216190278 }, AxisLimits { min: -500.0, max: 500.0, max_velocity: 49.883374991083905, max_acceleration: 1050.883688622038 }, AxisLimits { min: -500.0, max: 500.0, max_velocity: 1.0, max_acceleration: 0.5 }, AxisLimits { min: -500.0, max: 500.0, max_velocity: 1.0, max_acceleration: 0.5 }], points = [[-164.2828539134687, 0.0, 0.0, -304.65903527886815, 0.0, 0.0], [266.36130586842205, 0.0, 0.0, -358.8663591078748, 0.0, 0.0], [0.0, 0.0, 0.0, 3.9626956418206354, 0.0, 0.0]], scale = 0.7950360020904962

@@ -10,6 +10,9 @@ use thiserror::Error;
 
 pub mod blend;
 pub mod sampled;
+pub mod trajectory;
+
+pub use trajectory::{JointState, MotionKind, Poly, Trajectory};
 
 /// A one-axis motion profile made of constant-acceleration pieces, as the
 /// MCU executes them: `breakpoints` are the times where the acceleration
