@@ -30,6 +30,7 @@ use motioncore_protocol::{
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::AbortHandle;
 
 pub const ACK_TIMEOUT: Duration = Duration::from_millis(500);
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_millis(100);
@@ -114,6 +115,8 @@ pub struct McuLink {
     out: mpsc::Sender<HostFrame>,
     prio: mpsc::Sender<HostFrame>,
     status: watch::Receiver<Option<Status>>,
+    /// Writer, reader and heartbeat tasks; they own the transport.
+    tasks: Arc<[AbortHandle; 3]>,
 }
 
 /// Messages that may overtake queued normal traffic. Each is either
@@ -149,11 +152,27 @@ impl McuLink {
         let (ev_tx, ev_rx) = mpsc::unbounded_channel();
         let (st_tx, st_rx) = watch::channel(None);
 
-        tokio::spawn(writer(wr, prio_rx, out_rx, shared.clone(), ev_tx.clone()));
-        tokio::spawn(reader(rd, shared.clone(), ev_tx.clone(), st_tx));
-        tokio::spawn(heartbeat(prio_tx.clone(), shared.clone(), ev_tx));
+        let tasks = [
+            tokio::spawn(writer(wr, prio_rx, out_rx, shared.clone(), ev_tx.clone())).abort_handle(),
+            tokio::spawn(reader(rd, shared.clone(), ev_tx.clone(), st_tx)).abort_handle(),
+            tokio::spawn(heartbeat(prio_tx.clone(), shared.clone(), ev_tx)).abort_handle(),
+        ];
 
-        (Self { shared, out: out_tx, prio: prio_tx, status: st_rx }, ev_rx)
+        (Self { shared, out: out_tx, prio: prio_tx, status: st_rx, tasks: Arc::new(tasks) }, ev_rx)
+    }
+
+    /// Shut the link down: mark it dead, fail pending commands with
+    /// [`McuError::LinkDown`], and end its tasks, which drops the transport.
+    /// A serial port can be opened again at once (Windows opens COM ports
+    /// exclusively). No [`McuEvent::LinkLost`] is sent: the caller decided.
+    /// Idempotent.
+    pub fn close(&self) {
+        self.shared.alive.store(false, Ordering::SeqCst);
+        self.shared.pending.lock().unwrap().clear();
+        self.shared.clock_waiters.lock().unwrap().clear();
+        for t in self.tasks.iter() {
+            t.abort();
+        }
     }
 
     pub fn is_alive(&self) -> bool {

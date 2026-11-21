@@ -19,7 +19,7 @@ schema = 1
 
 [robot]
 name = "six-axis-rp2040-timing"
-profile = "org.motioncore.robot.six_axis"
+profile = "org.motioncore.robot.single_axis"
 
 [mcu.main]
 board = "rp2040-pico"

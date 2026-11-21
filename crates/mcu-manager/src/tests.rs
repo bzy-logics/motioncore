@@ -68,7 +68,8 @@ async fn executes_segments_on_synchronised_clock() {
 
 #[tokio::test]
 async fn homing_reports_completion() {
-    let opts = VirtualOptions { axes: vec![SimAxis { start_steps: 500, endstop: Some(SimEndstop { at_steps: 0, positive_side: false }) }] };
+    let opts =
+        VirtualOptions { axes: vec![SimAxis { start_steps: 500, endstop: Some(SimEndstop { at_steps: 0, positive_side: false }) }], interlock_open: false };
     let (link, mut ev, _h) = start_virtual(opts);
     link.identify().await.unwrap();
     link.command(HostMsg::ConfigureAxis(axis_cfg())).await.unwrap();
@@ -172,4 +173,17 @@ async fn emergency_stop_overtakes_saturated_queue() {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn close_releases_the_transport() {
+    let (link, _ev, mcu) = start_virtual(VirtualOptions::default());
+    link.identify().await.unwrap();
+    // Without close, the heartbeat keeps the link (and the port) open as long
+    // as the MCU answers; on Windows a COM port then cannot be reopened.
+    link.close();
+    tokio::time::timeout(Duration::from_secs(2), mcu).await.expect("the MCU side should see the host close the stream").unwrap();
+    assert!(!link.is_alive());
+    assert!(matches!(link.command(HostMsg::QueryStatus).await, Err(McuError::LinkDown)));
+    link.close(); // idempotent
 }
