@@ -36,6 +36,8 @@ const RECONNECT_PERIOD: Duration = Duration::from_secs(2);
 const STOP_CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long fresh telemetry may take to confirm a homed position.
 const HOMING_CONFIRM_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long the MCU may take to answer the status query of the handshake.
+const STATUS_AT_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Default)]
 pub struct Options {
@@ -322,7 +324,11 @@ impl Engine {
                     if let Some(t) = g.virtual_task.take() {
                         t.abort();
                     }
-                    g.link = None;
+                    // Release the transport, or the next attempt finds the
+                    // serial port still open (Windows: "Access is denied").
+                    if let Some(l) = g.link.take() {
+                        l.close();
+                    }
                     if g.sup.state() == RobotState::Initializing {
                         let _ = g.apply(Event::ConnectionLost);
                     }
@@ -374,6 +380,33 @@ impl Engine {
         check_identity(&self.mcu, &self.robot.file.axes, &id).map_err(|e| anyhow::anyhow!(e))?;
         let clock = link.sync_clock(8).await?;
         link.command(HostMsg::SetWatchdog { timeout_ms: self.mcu.watchdog_ms }).await?;
+        // A fault latched on the MCU survives a reconnect: the safety
+        // interlock open at boot, or the watchdog expired while the host was
+        // away. A faulted MCU refuses axis configuration, so connect into the
+        // faulted state instead of failing; Reset fault configures the axes
+        // once the hazard is gone. Never reset the fault automatically.
+        let status = current_status(&link, STATUS_AT_CONNECT_TIMEOUT).await.map_err(|e| anyhow::anyhow!(e))?;
+        if let Some(code) = status.fault {
+            {
+                let mut g = self.inner.lock().unwrap();
+                g.identity = Some(id.clone());
+                for a in g.axes.iter_mut() {
+                    a.homed = false;
+                    a.enabled = false;
+                }
+            }
+            let (fc, what) = map_mcu_fault(code);
+            self.log(
+                "error",
+                format!(
+                    "MCU '{}' connected with a latched fault: {what}. Axes are not configured until the fault is reset{}",
+                    self.mcu.name,
+                    if code == McuFault::EmergencyStop { " (is the safety interlock closed?)" } else { "" }
+                ),
+            );
+            self.fault(Fault::new(fc, format!("MCU fault at connect: {what}")));
+            return Ok(());
+        }
         for i in 0..self.robot.file.axes.len() {
             let cfg = self.mcu_axis_config(i, false, 0);
             link.command(HostMsg::ConfigureAxis(cfg)).await?;
@@ -513,7 +546,9 @@ impl Engine {
                 McuEvent::LinkLost { reason } => {
                     self.log("error", format!("MCU link lost: {reason}"));
                     let mut g = self.inner.lock().unwrap();
-                    g.link = None;
+                    if let Some(l) = g.link.take() {
+                        l.close();
+                    }
                     g.identity = None;
                     if let Some(t) = g.virtual_task.take() {
                         t.abort();
@@ -1545,6 +1580,22 @@ fn check_identity(mcu: &ResolvedMcu, axes: &[AxisSection], id: &Identity) -> Res
 /// Wait for an MCU status report that arrives **after** this call and
 /// satisfies `ok`. Telemetry received earlier never counts; a reported MCU
 /// fault, link loss or the timeout is an error.
+/// The MCU's current status, fault or not.
+async fn current_status(link: &McuLink, timeout: Duration) -> Result<Status, String> {
+    let mut w = link.status_watch();
+    w.borrow_and_update();
+    let _ = link.send(HostMsg::QueryStatus);
+    let wait = async {
+        loop {
+            w.changed().await.map_err(|_| "MCU link closed".to_string())?;
+            if let Some(s) = w.borrow_and_update().clone() {
+                return Ok(s);
+            }
+        }
+    };
+    tokio::time::timeout(timeout, wait).await.map_err(|_| format!("no MCU status within {timeout:?}"))?
+}
+
 async fn fresh_status(link: &McuLink, timeout: Duration, ok: impl Fn(&Status) -> bool) -> Result<Status, String> {
     let mut w = link.status_watch();
     w.borrow_and_update();

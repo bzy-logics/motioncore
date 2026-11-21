@@ -142,7 +142,14 @@ async fn start_with(name: &str, fault_injection: bool) -> Client {
 }
 
 async fn start_opts(name: &str, opts: engine::Options) -> Client {
-    let path = profile(name);
+    let mut c = launch(profile(name), opts).await;
+    c.wait_state("disabled", Duration::from_secs(5)).await;
+    c
+}
+
+/// Start an engine on the profile at `path` and connect a client, without
+/// waiting for any state.
+async fn launch(path: std::path::PathBuf, opts: engine::Options) -> Client {
     let robot = motioncore_device_graph::load(&path).unwrap();
     let axis_ids: Vec<String> = robot.file.axes.iter().map(|a| a.id.clone()).collect();
     let mut reg = Registry::new(CORE_CAPABILITIES.iter().copied());
@@ -164,9 +171,7 @@ async fn start_opts(name: &str, opts: engine::Options) -> Client {
             Err(_) => tokio::time::sleep(Duration::from_millis(20)).await,
         }
     };
-    let mut c = Client { engine: EngineServiceClient::new(channel.clone()), firmware: FirmwareServiceClient::new(channel) };
-    c.wait_state("disabled", Duration::from_secs(5)).await;
-    c
+    Client { engine: EngineServiceClient::new(channel.clone()), firmware: FirmwareServiceClient::new(channel) }
 }
 
 fn axis(s: &Value) -> &Value {
@@ -772,4 +777,70 @@ async fn telemetry_keeps_flowing_while_a_move_is_planned() {
     let end = done["axes"][0]["commanded_position"].as_f64().unwrap();
     // Within one step (the commanded position is resynced from the MCU step counter).
     assert!((end - start - 5.0).abs() < 0.05, "{start} -> {end}");
+}
+
+/// A virtual MCU served on TCP that keeps its latched state across host
+/// connections is not needed: an MCU that boots with the safety interlock
+/// open (an RP2040 with GP27 not pulled to GND) is faulted before the engine
+/// ever connects, like an MCU whose watchdog expired while the host was away.
+#[tokio::test]
+async fn an_mcu_that_is_already_faulted_connects_into_the_faulted_state() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = connections.clone();
+    tokio::spawn(async move {
+        loop {
+            let (sock, _) = listener.accept().await.unwrap();
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let opts = motioncore_simulator::VirtualOptions { axes: vec![Default::default(); 6], interlock_open: true };
+            tokio::spawn(motioncore_simulator::run(sock, opts));
+        }
+    });
+    let text = std::fs::read_to_string(profile("single-axis-virtual.toml")).unwrap();
+    let text = text.replace("transport = \"virtual\"", &format!("transport = \"tcp://127.0.0.1:{port}\""));
+    let path = std::env::temp_dir().join(format!("mc-faulted-mcu-{}.toml", std::process::id()));
+    std::fs::write(&path, text).unwrap();
+
+    let mut c = launch(path.clone(), engine::Options::default()).await;
+    let s = c.wait_state("faulted", Duration::from_secs(5)).await;
+    assert_eq!(s["fault"]["code"], "emergency_stop", "{s}");
+    // Connected once, and stays connected: no reconnect loop.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(c.status().await["state"], "faulted");
+    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // The interlock is still open: no enable, no reset, nothing automatic.
+    assert_eq!(c.call("enable", json!({})).await.unwrap_err()["code"], "invalid_state");
+    let e = c.call("reset_fault", json!({})).await.unwrap_err();
+    assert_eq!(e["code"], "invalid_state", "{e}");
+    assert!(e["message"].as_str().unwrap().contains("interlock"), "{e}");
+    assert_eq!(c.status().await["state"], "faulted");
+    let _ = std::fs::remove_file(path);
+}
+
+/// Every shipped robot profile names only plugins the engine has. The RP2040
+/// profiles once named a robot plugin that never existed: firmware builds
+/// worked, the engine refused to start.
+#[test]
+fn every_shipped_profile_uses_existing_plugins() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../robot-profiles");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
+        }
+        let robot = motioncore_device_graph::load(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let axis_ids: Vec<String> = robot.file.axes.iter().map(|a| a.id.clone()).collect();
+        let mut reg = Registry::new(CORE_CAPABILITIES.iter().copied());
+        for p in motioncore_builtin_plugins::all() {
+            reg.add_builtin(p);
+        }
+        assert!(reg.start(&PluginContext { robot_name: "t".into(), axis_ids }).is_empty());
+        for p in &robot.required_plugins {
+            assert!(reg.is_active(p), "{} requires plugin '{p}', which does not exist", path.display());
+        }
+        checked += 1;
+    }
+    assert!(checked >= 6, "only {checked} profiles found");
 }

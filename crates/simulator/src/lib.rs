@@ -37,6 +37,10 @@ pub struct SimAxis {
 #[derive(Debug, Clone, Default)]
 pub struct VirtualOptions {
     pub axes: Vec<SimAxis>,
+    /// The E-stop chain's monitoring contact is open (like an RP2040 with
+    /// GP27 not pulled to GND): the MCU latches an emergency stop at boot
+    /// and refuses Enable and fault reset.
+    pub interlock_open: bool,
 }
 
 impl VirtualOptions {
@@ -54,7 +58,7 @@ impl VirtualOptions {
                 }
             }
         }
-        Self { axes }
+        Self { axes, interlock_open: false }
     }
 }
 
@@ -64,6 +68,7 @@ pub struct SimHal {
     pub enabled: [bool; AXES],
     endstops: [Option<SimEndstop>; AXES],
     pub steps_while_disabled: u64,
+    pub interlock_open: bool,
 }
 
 impl SimHal {
@@ -74,7 +79,7 @@ impl SimHal {
             physical[i] = a.start_steps;
             endstops[i] = a.endstop;
         }
-        Self { physical, enabled: [false; AXES], endstops, steps_while_disabled: 0 }
+        Self { physical, enabled: [false; AXES], endstops, steps_while_disabled: 0, interlock_open: opts.interlock_open }
     }
 }
 
@@ -93,6 +98,10 @@ impl Hal for SimHal {
         if let Some(e) = self.enabled.get_mut(axis as usize) {
             *e = enabled;
         }
+    }
+
+    fn interlock_ok(&mut self) -> bool {
+        !self.interlock_open
     }
 
     fn endstop_raw(&mut self, axis: u8) -> bool {
